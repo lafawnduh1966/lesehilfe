@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lesehilfe",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwXmsG6PTj3HS6p/dU712iSspgzs76fYPm3SZlemIRhwVPDqsWC9BCw0p3JprBp5klgnUM401TBT7sZkv11AQ5qPuJF3CiCy417fhy22mE9D3UkszHV2d/I1wPoaWZVikRvf71aJ+04OrZtSEzUGRalncBxOC6Luyi/zQiElEMNkvIgPTauFHWjpZySkLDCJbRIOZf8eMSB+NyNSivcjBXuFrGDqNU1xNi1U7Jiv+FXJfUe4HVISjtmKcjE1CuJgeKusU6lRVeBfJqWF87cErz2lCcvh+jSDDy4QZEytgUE8XMwDmeu42M/qxzlsETkt/VHJN5hjX2zo1pDEDSriJTwIDAQAB",
   "description": "Explain code in GitHub PR reviews with a local AI agent (pi + your ChatGPT subscription).",
   "permissions": [

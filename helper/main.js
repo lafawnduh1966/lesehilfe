@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import { preparePR, cleanupWorktrees, gitVersion, worktreePath } from './repo.js';
 import * as agent from './agent.js';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 const methods = {
   async status() {

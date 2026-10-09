@@ -14,9 +14,9 @@ fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 
 # --- Requirements ----------------------------------------------------------------
 command -v git >/dev/null 2>&1 || fail "git is required."
-NODE=$(command -v node 2>/dev/null) || fail "Node.js 20+ is required (https://nodejs.org)."
-NODE_MAJOR=$("$NODE" -p 'process.versions.node.split(".")[0]')
-[ "$NODE_MAJOR" -ge 20 ] || fail "Node.js 20+ is required, found $("$NODE" --version)."
+NODE=$(command -v node 2>/dev/null) || fail "Node.js 22.19+ is required (https://nodejs.org)."
+"$NODE" -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 19) ? 0 : 1)' \
+  || fail "Node.js 22.19+ is required, found $("$NODE" --version)."
 # Chrome starts the helper without your shell's PATH, so the launcher uses node's
 # absolute path (the PATH entry, e.g. /opt/homebrew/bin/node, survives upgrades).
 

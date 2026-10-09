@@ -212,7 +212,7 @@ function renderHelperSetup() {
   retry.addEventListener('click', () => helper.connect());
   if (helper.error === 'not-installed' || !helper.error) {
     root.append(
-      el('div', { textContent: 'Not installed. In a terminal (needs Node.js 20+ and git):' }),
+      el('div', { textContent: 'Not installed. In a terminal (needs Node.js 22.19+ and git):' }),
       el('pre', {
         className: 'install',
         textContent: `git clone ${REPO_URL}.git ~/lesehilfe\n~/lesehilfe/install.sh`,

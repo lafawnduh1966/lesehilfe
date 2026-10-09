@@ -2,11 +2,11 @@
 
 A Chrome extension that helps you review GitHub pull requests: select code in a PR's diff, collect snippets across files, and have an AI agent explain them — with the PR's description as context and the full repository checked out locally so it can look up definitions, call sites, tests and docs.
 
-The agent is [pi](https://pi.dev), running locally and paid for by **your ChatGPT Plus/Pro subscription** (no API key needed). It only gets read-only tools (`read`, `grep`, `find`, `ls`) on a local checkout of the PR.
+The agent is [pi](https://pi.dev), running locally with GPT-6.1 Sol (selectable) and paid for by **your ChatGPT Plus/Pro subscription** (no API key needed). It only gets read-only tools (`read`, `grep`, `find`, `ls`) on a local checkout of the PR.
 
 ## Install
 
-Requirements: macOS or Linux, a Chromium browser (Chrome, Brave, Edge, Arc, Chromium, Vivaldi), **Node.js 20+**, **git**, and a ChatGPT Plus or Pro subscription.
+Requirements: macOS or Linux, a Chromium browser (Chrome, Brave, Edge, Arc, Chromium, Vivaldi), **Node.js 22.19+**, **git**, and a ChatGPT Plus or Pro subscription.
 
 ```sh
 git clone https://github.com/lafawnduh1966/lesehilfe.git ~/lesehilfe
@@ -58,7 +58,7 @@ Side panel ──native messaging──▶ helper (Node, ~/lesehilfe/helper)
 
 ### Safety
 
-PR code is untrusted. The agent has no shell, can't write files, and has no network tools; the repository's own pi extensions, skills, prompts and settings are ignored (only `AGENTS.md`/`CLAUDE.md` are read as context). The worst a malicious PR can do is make the explanation wrong.
+PR code is untrusted. The agent has no shell, can't write files, and has no network tools. Every tool call is confined to the PR checkout — paths outside it (including through symlinks a PR might add) are blocked, so files like `~/.ssh` or your credentials can't end up in the conversation. The repository's own pi extensions, skills, prompts and settings are ignored (only `AGENTS.md`/`CLAUDE.md` are read as context). The worst a malicious PR can do is make the explanation wrong.
 
 ## Uninstall
 
