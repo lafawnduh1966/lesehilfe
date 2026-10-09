@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesehilfe</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header>
+    <h1>Lesehilfe</h1>
+    <span id="pr-key" class="muted"></span>
+  </header>
+
+  <details id="setup" class="setup" open>
+    <summary id="setup-summary">Setup</summary>
+    <div class="setup-row">
+      <span class="label">Helper</span>
+      <div id="setup-helper" class="setup-body"></div>
+    </div>
+    <div class="setup-row">
+      <span class="label">GitHub</span>
+      <div id="account" class="setup-body"></div>
+    </div>
+    <div class="setup-row">
+      <span class="label">ChatGPT</span>
+      <div id="setup-codex" class="setup-body"></div>
+    </div>
+  </details>
+
+  <p id="not-pr" class="hint" hidden>Open a pull request's <b>Files changed</b> tab on GitHub.</p>
+
+  <main id="main" hidden>
+    <section id="pr"></section>
+
+    <section>
+      <h2>Current selection</h2>
+      <div id="selection"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Snippets <span id="snippet-count" class="muted"></span></h2>
+        <button id="clear" class="link" type="button">Clear all</button>
+      </div>
+      <div id="snippets"></div>
+    </section>
+
+    <section id="ask">
+      <div class="section-head">
+        <h2>Ask</h2>
+        <button id="new-conversation" class="link" type="button" hidden>New conversation</button>
+      </div>
+      <div id="conversation"></div>
+      <p id="ask-status" class="muted" hidden></p>
+      <textarea id="question" rows="3" placeholder="Explain what the selected code does… (or ask anything about this PR)"></textarea>
+      <div class="row ask-actions">
+        <button id="explain" type="button" class="primary">Explain</button>
+        <button id="stop" type="button" hidden>Stop</button>
+      </div>
+      <p id="ask-hint" class="hint"></p>
+    </section>
+
+    <section class="actions">
+      <button id="copy" type="button">Copy context for another AI</button>
+      <details>
+        <summary>Preview context</summary>
+        <pre id="preview"></pre>
+      </details>
+    </section>
+  </main>
+
+  <details class="settings">
+    <summary>Settings</summary>
+    <label for="model">Model (ChatGPT subscription)</label>
+    <select id="model"></select>
+    <label for="token">Personal access token (fallback if you don't sign in with GitHub)</label>
+    <div class="row">
+      <input id="token" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off">
+      <button id="save-token" type="button">Save</button>
+    </div>
+  </details>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

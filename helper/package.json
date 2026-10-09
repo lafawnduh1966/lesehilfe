@@ -1,0 +1,12 @@
+{
+  "name": "lesehilfe-helper",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Native messaging helper for the Lesehilfe Chrome extension: clones PR code and runs a read-only pi agent.",
+  "type": "module",
+  "main": "main.js",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.6"
+  }
+}

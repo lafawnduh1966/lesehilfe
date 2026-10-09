@@ -1,0 +1,5 @@
+node_modules/
+.build/
+.swiftpm/
+*.pem
+.DS_Store
