@@ -47,6 +47,13 @@
   };
   const save = () => alive() && chrome.storage.local.set({ [STORAGE_KEY]: tour });
   const notify = (message) => alive() && chrome.runtime.sendMessage({ type: 'tourState', ...message }).catch(() => {});
+  // Where the tour is, for the side panel's map.
+  const position = () => ({
+    prKey: tour.prKey, flowIndex: tour.flowIndex, index: tour.index, total: tour.stops.length,
+    phase: tour.phase, beat: tour.beat, seen: tour.seen || {},
+    notes: beatsFor(tour.index).map((b) => ({ note: b.note, tone: b.tone, placeholder: Boolean(b.extra) })),
+  });
+  const report = () => tour && notify(position());
 
   async function fileHash(file) {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(file));
@@ -219,7 +226,7 @@
     tour.phase = 'card';
     tour.beat = 0;
     save();
-    notify({ prKey: tour.prKey, index, total: tour.stops.length });
+    report();
     ensureOverlay();
     updateRemote();
     markTree();
@@ -238,7 +245,7 @@
     tour.phase = 'stop';
     tour.beat = seenBefore ? beatsFor(index).length : 1;
     save();
-    notify({ prKey: tour.prKey, index, total: tour.stops.length });
+    report();
     ensureOverlay();
     updateRemote();
     markTree();
@@ -271,6 +278,7 @@
     shownKey = `${index}:${sb ? 'sb' : 'fallback'}`;
     if (sb) tour.seen = { ...tour.seen, [index]: true };
     save();
+    report();
     await overlay.showStop(
       { file: stop.file, startLine: stop.startLine, endLine: stop.endLine, beats: beatsFor(index) },
       { reveal: tour.beat, animate: !seenBefore }
@@ -285,6 +293,7 @@
     if (tour.beat < beatsFor(tour.index).length) {
       tour.beat++;
       save();
+      report();
       updateRemote();
       return overlay.reveal(tour.beat, { animate: true });
     }
@@ -297,6 +306,7 @@
     if (tour.phase === 'stop' && tour.beat > 1) {
       tour.beat--;
       save();
+      report();
       updateRemote();
       return overlay.reveal(tour.beat);
     }
@@ -349,16 +359,27 @@
       else if (message.index === tour.index && shownKey === `${tour.index}:fallback`) show(tour.index);
     } else if (message.type === 'tourEnd') {
       end();
+    } else if (message.type === 'tourGoto' && tour && overlay) {
+      // From the panel's map: a beat of the stop on screen, or another stop.
+      if (message.index === tour.index && tour.phase === 'stop' && message.beat) {
+        tour.beat = Math.min(message.beat, beatsFor(tour.index).length);
+        save();
+        report();
+        updateRemote();
+        overlay.reveal(tour.beat);
+      } else if (message.index !== tour.index || tour.phase !== 'stop') {
+        show(message.index, { all: Boolean(tour.seen?.[message.index]) || message.index < tour.index });
+      }
     } else if (message.type === 'tourResume') {
       resumeSaved().then((ok) => sendResponse({ ok }));
       return true;
     } else if (message.type === 'tourStatus') {
       if (tour) {
-        sendResponse({ prKey: tour.prKey, flowIndex: tour.flowIndex, index: tour.index, total: tour.stops.length });
+        sendResponse(position());
       } else {
         // A saved tour for this PR that isn't running: the panel offers to resume it.
         savedTour().then((saved) =>
-          sendResponse(saved ? { prKey: saved.prKey, flowIndex: saved.flowIndex, index: saved.index, total: saved.stops.length, paused: true } : null)
+          sendResponse(saved ? { prKey: saved.prKey, flowIndex: saved.flowIndex, index: saved.index, total: saved.stops.length, seen: saved.seen || {}, paused: true } : null)
         );
         return true;
       }

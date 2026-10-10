@@ -1,5 +1,6 @@
 import { helper } from './helper-client.js';
 import { renderMarkdown } from './markdown.js';
+import { renderTourMap } from './tour-map.js';
 
 const $ = (selector) => document.querySelector(selector);
 const PR_PATH = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
@@ -157,6 +158,12 @@ function buildContext(list = snippets) {
   if (d) {
     parts.push(`Author: ${d.author} · ${d.base} ← ${d.head} · ${d.changedFiles} files changed (+${d.additions} −${d.deletions})`);
     parts.push(`## Description\n\n${d.body?.trim() || '(no description)'}`);
+  }
+  const touring = pageTour?.prKey === pr.key && !pageTour.paused && overview?.flows[pageTour.flowIndex];
+  if (touring) {
+    const flow = overview.flows[pageTour.flowIndex];
+    const stop = flow.steps[pageTour.index];
+    parts.push(`## Where the reviewer is\n\nOn a guided tour of the flow "${flow.title}", at stop ${pageTour.index + 1} of ${flow.steps.length}: "${stop.title}" — ${stop.file}:${stop.startLine}-${stop.endLine}. ${stop.explanation}`);
   }
   if (overview?.flows?.length) {
     parts.push(`## User flows (from Lesehilfe's earlier overview)\n\n${overview.flows.map((f) => `- ${f.title} (${f.actor}, ${f.change}): ${f.summary}`).join('\n')}`);
@@ -594,11 +601,13 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.ended) {
     if (pageTour?.prKey === message.prKey) pageTour = null;
   } else if (pageTour?.prKey === message.prKey) {
-    pageTour.index = message.index;
-    pageTour.paused = false;
-    for (const i of Object.keys(pageTour.storyboards)) sendStoryboard(Number(i));
+    const wasIndex = pageTour.index;
+    Object.assign(pageTour, message, { paused: false });
+    // The page may have reloaded meanwhile; resend storyboards when it enters a stop.
+    if (message.index !== wasIndex || message.phase === 'card') for (const i of Object.keys(pageTour.storyboards)) sendStoryboard(Number(i));
   } else {
-    pageTour = { prKey: message.prKey, index: message.index, total: message.total, storyboards: {} };
+    pageTour = { ...message, storyboards: {} };
+    loadTourStoryboards();
   }
   renderOverview();
 });
@@ -608,7 +617,22 @@ async function loadPageTourStatus() {
   if (status && status.prKey === pr?.key && (pageTour?.prKey !== status.prKey || pageTour.paused !== status.paused)) {
     pageTour = { ...status, storyboards: pageTour?.storyboards || {} };
     renderOverview();
+    loadTourStoryboards();
   }
+}
+
+// The map shows arrivals and functions from the storyboards; after a panel reopen, load the saved ones.
+async function loadTourStoryboards() {
+  if (!pageTour || pageTour.flowIndex == null || !helper.status) return;
+  const key = pageTour.prKey;
+  const cached = await helper.call('cachedStoryboards', { owner: pr.owner, repo: pr.repo, number: pr.number, flowIndex: pageTour.flowIndex }).catch(() => ({}));
+  if (pageTour?.prKey !== key) return;
+  pageTour.storyboards = { ...cached, ...pageTour.storyboards };
+  renderOverview();
+}
+
+function gotoInTour(index, beat) {
+  chrome.tabs.sendMessage(tab.id, { type: 'tourGoto', index, beat }).catch(() => {});
 }
 
 async function resumePageTour() {
@@ -690,6 +714,18 @@ function renderOverview() {
   const root = $('#overview');
   if (!root || !pr) return;
   root.replaceChildren();
+  const touring = pageTour?.prKey === pr.key && !pageTour.paused && overview?.flows[pageTour.flowIndex];
+  document.body.classList.toggle('touring', Boolean(touring));
+  $('#overview-heading').textContent = touring ? 'Tour' : 'Overview';
+  if (touring) {
+    return renderTourMap(root, {
+      el,
+      flow: overview.flows[pageTour.flowIndex],
+      tour: pageTour,
+      onGoto: gotoInTour,
+      onEnd: endPageTour,
+    });
+  }
   const ready = helper.status?.codex?.signedIn && prMeta[pr.key]?.data;
   const running = familiarizing?.key === pr.key && !familiarizing.error;
 

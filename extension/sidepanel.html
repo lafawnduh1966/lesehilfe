@@ -33,16 +33,16 @@
     <section id="pr"></section>
 
     <section>
-      <h2>Overview</h2>
+      <h2 id="overview-heading">Overview</h2>
       <div id="overview"></div>
     </section>
 
-    <section>
+    <section class="hide-when-touring">
       <h2>Current selection</h2>
       <div id="selection"></div>
     </section>
 
-    <section>
+    <section class="hide-when-touring">
       <div class="section-head">
         <h2>Snippets <span id="snippet-count" class="muted"></span></h2>
         <button id="clear" class="link" type="button">Clear all</button>
@@ -65,7 +65,7 @@
       <p id="ask-hint" class="hint"></p>
     </section>
 
-    <section class="actions">
+    <section class="actions hide-when-touring">
       <button id="copy" type="button">Copy context for another AI</button>
       <details>
         <summary>Preview context</summary>
