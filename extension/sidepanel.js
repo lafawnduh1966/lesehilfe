@@ -99,37 +99,15 @@ function render() {
   renderSnippets();
 }
 
+// PR metadata (base branch, head commit, description) is only used as context for
+// the agent; the panel shows nothing about it unless loading failed.
 function renderPR() {
   renderOverview();
   const root = $('#pr');
   root.replaceChildren();
-  if (!pr) return;
-  const meta = prMeta[pr.key] || {};
-
-  if (meta.loading) {
-    root.append(el('p', { className: 'muted', textContent: 'Loading PR…' }));
-  } else if (meta.error) {
-    const fallbackTitle = tab?.title?.split(' · ')[0];
-    root.append(
-      fallbackTitle ? el('p', { className: 'pr-title', textContent: fallbackTitle }) : null,
-      el('p', { className: 'error', textContent: meta.error })
-    );
-  } else if (meta.data) {
-    const d = meta.data;
-    root.append(
-      el('p', { className: 'pr-title', textContent: d.title }),
-      el('div', {
-        className: 'pr-meta',
-        textContent: `${d.author} · ${d.base} ← ${d.head} · ${d.changedFiles} files · +${d.additions} −${d.deletions} · ${d.state}`,
-      }),
-      el(
-        'details',
-        {},
-        el('summary', { textContent: 'Description' }),
-        el('div', { className: 'pr-body', textContent: d.body || '(no description)' })
-      )
-    );
-  }
+  const error = pr && prMeta[pr.key]?.error;
+  root.hidden = !error;
+  if (error) root.append(el('p', { className: 'error', textContent: error }));
   renderPreview();
 }
 
