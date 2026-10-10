@@ -15,3 +15,7 @@ Findings so far:
   anchor and file-tree jumps are imprecise). `?mode=single#diff-0134ce90acde16a972de3d11694f24d62fa4a1e0d7515bb8b5a6a7a5544dfe14<sha256(path)>` renders exactly
   one file and is a reliable way for a tour to move between files.
 - Narrowing the diff column (padding on the PageLayout content) creates a margin for notes.
+- Connectors never cross code: they run from the note through a lane beside the code column
+  into the empty tail of their line (measured from text nodes; GitHub wraps lines in inline
+  elements spanning the full column). No room → only the numbered badge links note and code.
+  Connectors of finished beats fade; hovering a note shows its connector again.

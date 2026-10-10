@@ -10,9 +10,9 @@ window.__lhTour = (() => {
     marks: [
       { at: 358, token: '_accepted', shape: 'circle', note: 'Is this still <b>exactly</b> the agreement that was accepted? Same revision, same terms hash — or revert.' },
       { at: [362, 369], shape: 'bracket', note: 'The participant’s signature must cover <b>this exact execution</b>: evidence, callback data, ETH value.' },
-      { at: 378, token: '_deliverOutput', shape: 'underline', color: '#1a7f37', note: '① emUSD is minted to the user’s vault <b>first</b>…' },
-      { at: 379, token: 'onOutputReceived', shape: 'circle', color: '#1a7f37', note: '② …<b>then</b> the user’s own route runs: stake → Morpho collateral → borrow USDC → pay the issuer.' },
-      { at: 381, token: 'verifySettlement', shape: 'box', color: '#cf222e', back: 378, note: '③ Only now is payment proven. Not paid exactly? <b>Everything reverts</b> — including the mint.' },
+      { at: 378, token: '_deliverOutput', shape: 'underline', color: '#1a7f37', note: 'emUSD is minted to the user’s vault <b>first</b>…' },
+      { at: 379, token: 'onOutputReceived', shape: 'circle', color: '#1a7f37', note: '…<b>then</b> the user’s own route runs: stake → Morpho collateral → borrow USDC → pay the issuer.' },
+      { at: 381, token: 'verifySettlement', shape: 'box', color: '#cf222e', back: 378, note: 'Only now is payment proven. Not paid exactly? <b>Everything reverts</b> — including the mint.' },
     ],
   };
   const INK = '#0b57d0', MARGIN = 340;
@@ -65,6 +65,20 @@ window.__lhTour = (() => {
     return docRect(range.getBoundingClientRect());
   }
   const lineRect = (n) => { const c = row(n); return c && docRect(c.closest('tr').getBoundingClientRect()); };
+  // Where the text of line n ends (on its last visual line, if it wraps): the free space after it is ours.
+  function textEnd(n) {
+    const code = row(n)?.querySelector('code'); if (!code) return null;
+    // Only text boxes count: GitHub wraps lines in inline elements that span the whole column.
+    const rects = [];
+    const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT); let node;
+    while ((node = walker.nextNode())) {
+      if (!node.data.trim()) continue;
+      const range = document.createRange(); range.selectNodeContents(node);
+      rects.push(...[...range.getClientRects()].filter((r) => r.width > 0));
+    }
+    const last = rects.reduce((a, r) => (!a || r.bottom > a.bottom + 1 || (Math.abs(r.bottom - a.bottom) <= 1 && r.right > a.right) ? r : a), null);
+    return last && docRect(last);
+  }
 
   // --- Overlay ------------------------------------------------------------------------
   const content = table().closest('[class^="prc-PageLayout-Content-"]');
@@ -87,6 +101,15 @@ window.__lhTour = (() => {
       pointer-events: auto; opacity: 0; transform: translateY(6px) rotate(var(--rot)); transition: opacity .35s, transform .35s; }
     .note.in { opacity: 1; transform: translateY(0) rotate(var(--rot)); }
     .note b { font-weight: 700; }
+    .note .num { display: inline-block; width: 20px; height: 20px; margin-right: 6px; border-radius: 50%; background: var(--c); color: #fff;
+      font: 700 12px/20px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; vertical-align: 2px; }
+    .note:hover { box-shadow: 0 1px 1px rgba(0,0,0,.08), 0 10px 22px rgba(0,0,0,.22); }
+    .badge { position: absolute; width: 18px; height: 18px; border-radius: 50%; background: var(--c); color: #fff; opacity: 0; transition: opacity .3s;
+      font: 700 11px/18px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; box-shadow: 0 0 0 2px #fff; }
+    .badge.in { opacity: 1; }
+    .conn { transition: opacity .5s; }
+    .conn.faded { opacity: 0; }
+    .conn.faded.hover { opacity: 1; }
     .label { position: absolute; font: 15px "Noteworthy", "Marker Felt", cursive; color: #cf222e; opacity: 0; transition: opacity .4s; transform: rotate(-90deg); transform-origin: left top; white-space: nowrap; }
     .label.in { opacity: 1; }
     .remote { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px;
@@ -129,45 +152,74 @@ window.__lhTour = (() => {
     path(svgInk, roughLine(hole.x, hole.y, hole.x + hole.w, hole.y, 1) + roughLine(hole.x, hole.y + hole.h, hole.x + hole.w, hole.y + hole.h, 1) + roughLine(hole.x, hole.y, hole.x, hole.y + hole.h, 1) + roughLine(hole.x + hole.w, hole.y, hole.x + hole.w, hole.y + hole.h, 1), { width: 1.4, color: 'rgba(11,87,208,.45)', animate, dur: 0.9 });
 
     let nextFree = 0;
+    const connectors = [];
+    const lane = t.right + 16; // vertical lane between the code column and the notes
     STOP.marks.forEach((m, i) => {
       const delay = animate ? 0.9 + i * 1.5 : 0;
       const color = m.color || INK;
+      const num = i + 1;
       const lines = Array.isArray(m.at) ? m.at : [m.at, m.at];
       const a = lineRect(lines[0]), b = lineRect(lines[1]);
-      let target;
+      let anchor; // where a connector may end: right after the line's text, if there's room
+      let badgeAt; // where the number goes next to the marking
       if (m.shape === 'bracket') {
         const x = t.right - 14;
         path(svgInk, roughLine(x - 10, a.top + 3, x, a.top + 3, 0.8) + roughLine(x, a.top + 3, x, b.bottom - 3, 1.2) + roughLine(x, b.bottom - 3, x - 10, b.bottom - 3, 0.8), { color, animate, delay });
-        target = { x: x + 4, y: (a.top + b.bottom) / 2 };
+        anchor = { x: x + 6, y: (a.top + b.bottom) / 2 }; // the bracket sits at the column edge
+
       } else {
         const r = tokenRect(lines[0], m.token) || { left: a.left + 80, right: a.left + 200, top: a.top, bottom: a.bottom, width: 120, height: a.height };
         if (m.shape === 'circle') path(svgInk, roughEllipse((r.left + r.right) / 2, (r.top + r.bottom) / 2, r.width / 2 + 12, r.height / 2 + 7), { color, animate, delay });
         if (m.shape === 'underline') path(svgInk, roughLine(r.left - 4, r.bottom + 2, r.right + 6, r.bottom + 1, 1.2), { color, width: 2.6, animate, delay });
         if (m.shape === 'box') path(svgInk, [[r.left - 7, r.top - 4, r.right + 7, r.top - 4], [r.right + 7, r.top - 4, r.right + 7, r.bottom + 4], [r.right + 7, r.bottom + 4, r.left - 7, r.bottom + 4], [r.left - 7, r.bottom + 4, r.left - 7, r.top - 4]].map((q) => roughLine(...q, 1.2)).join(''), { color, animate, delay });
-        target = { x: r.right + 12, y: (r.top + r.bottom) / 2 };
+        const end = textEnd(lines[0]);
+        const free = end ? lane - (end.right + 14) : 0;
+        if (free >= 36) anchor = { x: end.right + 14, y: (end.top + end.bottom) / 2 };
       }
 
-      // Sticky note in the right margin, stacked so notes don't overlap.
+      // Numbered badge at the start of the line, on the edge between line numbers and code: covers no text.
+      const cellLeft = docRect(row(lines[0]).getBoundingClientRect()).left;
+      badgeAt = { x: cellLeft - 9, y: a.top + Math.min(a.height, 24) / 2 - 9 };
+      const badge = document.createElement('div');
+      badge.className = 'badge'; badge.textContent = num; badge.style.setProperty('--c', color);
+      badge.style.left = `${badgeAt.x}px`; badge.style.top = `${badgeAt.y}px`;
+      notes.appendChild(badge);
+      setTimeout(() => badge.classList.add('in'), (delay + 0.3) * 1000);
+
+      // Sticky note in the right margin, as close to its line as the notes above allow.
       const note = document.createElement('div');
-      note.className = 'note'; note.innerHTML = m.note;
+      note.className = 'note';
+      note.innerHTML = `<span class="num">${num}</span>${m.note}`;
+      note.style.setProperty('--c', color);
       note.style.setProperty('--rot', `${j(1.6).toFixed(2)}deg`);
       note.style.left = `${t.right + 34}px`;
       notes.appendChild(note);
-      const top = Math.max(a.top - 18, nextFree);
+      const top = Math.max((anchor?.y ?? a.top) - 24, nextFree);
       note.style.top = `${top}px`;
       nextFree = top + note.offsetHeight + 14;
       setTimeout(() => note.classList.add('in'), (delay + 0.35) * 1000);
 
-      const [body, head] = roughArrow(t.right + 30, top + 22, target.x, target.y, target.y > top + 22 ? -0.18 : 0.18);
-      path(svgInk, body, { color, width: 2, animate, delay: delay + 0.55, dur: 0.45 });
-      path(svgInk, head, { color, width: 2, animate, delay: delay + 0.95, dur: 0.2 });
+      // Connector: note → lane → along the line's empty tail. It never crosses text.
+      if (anchor) {
+        const y0 = top + 24;
+        const g = document.createElementNS(NS, 'g'); g.setAttribute('class', 'conn'); svgInk.appendChild(g);
+        const d = roughLine(t.right + 32, y0, lane, y0, 0.7) + (Math.abs(y0 - anchor.y) > 3 ? roughLine(lane, y0, lane, anchor.y, 0.9) : '') + roughLine(lane, anchor.y, anchor.x, anchor.y, 0.7);
+        path(g, d, { color, width: 1.8, animate, delay: delay + 0.55, dur: 0.45 });
+        const head = roughLine(anchor.x, anchor.y, anchor.x + 9, anchor.y - 5, 0.4) + roughLine(anchor.x, anchor.y, anchor.x + 9, anchor.y + 5, 0.4);
+        path(g, head, { color, width: 1.8, animate, delay: delay + 0.95, dur: 0.15 });
+        connectors.push(g);
+        note.addEventListener('mouseenter', () => g.classList.add('hover'));
+        note.addEventListener('mouseleave', () => g.classList.remove('hover'));
+        // Once the next beat starts, this connector fades; hovering the note brings it back.
+        if (i < STOP.marks.length - 1) setTimeout(() => g.classList.add('faded'), (animate ? delay + 1.5 + 0.3 : 0) * 1000);
+      }
 
-      // "Reverts" arrow in the left gutter, from this line back up to `back`.
+      // "Reverts" arrow in the left gutter (line numbers, no code), from this line back up to `back`.
       if (m.back) {
         const from = lineRect(lines[0]), to = lineRect(m.back);
         const x = t.left + 4;
         const [bb, bh] = roughArrow(x, (from.top + from.bottom) / 2, x + 2, (to.top + to.bottom) / 2, 0.55);
-        path(svgInk, bb, { color, width: 2.2, animate, delay: delay + 1.1, dur: 0.6, dash: animate ? null : '7 5' });
+        path(svgInk, bb, { color, width: 2.2, animate, delay: delay + 1.1, dur: 0.6 });
         path(svgInk, bh, { color, width: 2.2, animate, delay: delay + 1.6, dur: 0.2 });
         const label = document.createElement('div');
         label.className = 'label'; label.textContent = 'reverts!';
