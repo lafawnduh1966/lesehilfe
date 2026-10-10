@@ -415,9 +415,11 @@
         const g = document.createElementNS(NS, 'g');
         g.setAttribute('class', 'conn');
         svgInk.appendChild(g);
-        const d = roughLine(t.right + 32, y0, lane, y0, 0.7) + (Math.abs(y0 - anchor.y) > 3 ? roughLine(lane, y0, lane, anchor.y, 0.9) : '') + roughLine(lane, anchor.y, anchor.x, anchor.y, 0.7);
+        // Drawn from the code towards the sticky, arrowhead at the sticky: code → explanation.
+        const tip = t.right + 32;
+        const d = roughLine(anchor.x, anchor.y, lane, anchor.y, 0.7) + (Math.abs(y0 - anchor.y) > 3 ? roughLine(lane, anchor.y, lane, y0, 0.9) : '') + roughLine(lane, y0, tip, y0, 0.7);
         path(g, d, { color, width: 1.8, animate, delay: 0.45, dur: 0.45, opacity });
-        path(g, roughLine(anchor.x, anchor.y, anchor.x + 9, anchor.y - 5, 0.4) + roughLine(anchor.x, anchor.y, anchor.x + 9, anchor.y + 5, 0.4), { color, width: 1.8, animate, delay: 0.85, dur: 0.15 });
+        path(g, roughLine(tip, y0, tip - 9, y0 - 5, 0.4) + roughLine(tip, y0, tip - 9, y0 + 5, 0.4), { color, width: 1.8, animate, delay: 0.85, dur: 0.15, opacity });
         note.addEventListener('mouseenter', () => g.classList.add('hover'));
         note.addEventListener('mouseleave', () => g.classList.remove('hover'));
       }
