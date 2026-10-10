@@ -103,7 +103,11 @@
       const badge = document.createElement('span');
       badge.className = 'lesehilfe-tree-badge';
       badge.textContent = numbers.join(' ');
-      row.appendChild(badge);
+      // Inside the name element, before the name: the row is a grid that would put a sibling
+      // at the end; here the badge comes first and only the name gets truncated.
+      const name = row.querySelector('[class*="TreeView-item-content-text"]');
+      if (name) name.prepend(badge);
+      else row.appendChild(badge);
     }
     const current = treeRow(tour.stops[tour.index].file);
     if (!current) return;
