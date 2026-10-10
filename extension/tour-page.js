@@ -9,7 +9,9 @@
   // Stop texts come from the agent, which reads untrusted PR content: never insert them as HTML.
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-  let tour = null; // { prKey, owner, repo, number, sha, flowIndex, flowTitle, stops, storyboards: { [i]: beats }, index }
+  // { prKey, owner, repo, number, sha, flowIndex, flowTitle, stops, storyboards: { [i]: beats },
+  //   index (current stop), beat (beats revealed in it), seen: { [i]: true } }
+  let tour = null;
   let overlay = null;
   let shownKey = null; // which stop (and storyboard version) is currently drawn
 
@@ -77,23 +79,40 @@
 
   function updateRemote() {
     const stop = tour.stops[tour.index];
+    const beats = beatsFor(tour.index).length;
     const pending = tour.stops.filter((_, i) => !tour.storyboards[i]).length;
+    const last = tour.stops.length - 1;
     overlay.setRemote({
       flowTitle: tour.flowTitle,
       index: tour.index,
       total: tour.stops.length,
       title: stop.title,
+      beat: tour.beat,
+      beats,
       status: pending ? `sketching ${tour.stops.length - pending}/${tour.stops.length}` : '',
-      canPrev: tour.index > 0,
-      canNext: tour.index < tour.stops.length - 1,
+      canPrev: tour.index > 0 || tour.beat > 1,
+      canNext: tour.index < last || tour.beat < beats,
+      canPrevStop: tour.index > 0,
+      canNextStop: tour.index < last,
     });
   }
 
-  async function show(index) {
+  /**
+   * Shows stop `index`. A new stop starts with its first beat, animated; a stop seen before
+   * (or reached by stepping back) shows all its beats at once.
+   */
+  async function show(index, { all = false } = {}) {
+    const seenBefore = Boolean(tour.seen?.[index]) || all;
     tour.index = index;
+    tour.beat = seenBefore ? beatsFor(index).length : 1;
     save();
     notify({ prKey: tour.prKey, index, total: tour.stops.length });
-    if (!overlay) overlay = create({ onPrev: prev, onNext: next, onReplay: () => overlay.replay(), onClose: end });
+    if (!overlay) {
+      overlay = create({
+        onPrev: back, onNext: forward, onPrevStop: prevStop, onNextStop: nextStop,
+        onReplay: replay, onClose: end,
+      });
+    }
     updateRemote();
     const stop = tour.stops[index];
     overlay.showCard('');
@@ -110,12 +129,50 @@
       );
       return;
     }
-    shownKey = `${index}:${tour.storyboards[index] ? 'sb' : 'fallback'}`;
-    await overlay.showStop({ file: stop.file, startLine: stop.startLine, endLine: stop.endLine, beats: beatsFor(index) });
+    const hasStoryboard = Boolean(tour.storyboards[index]);
+    shownKey = `${index}:${hasStoryboard ? 'sb' : 'fallback'}`;
+    if (hasStoryboard) {
+      tour.seen = { ...tour.seen, [index]: true };
+      save();
+    }
+    await overlay.showStop(
+      { file: stop.file, startLine: stop.startLine, endLine: stop.endLine, beats: beatsFor(index) },
+      { reveal: tour.beat, animate: !seenBefore }
+    );
   }
 
-  const next = () => tour && tour.index < tour.stops.length - 1 && show(tour.index + 1);
-  const prev = () => tour && tour.index > 0 && show(tour.index - 1);
+  // → : next beat, or the next stop after the last beat. ← : back a beat, or the previous stop.
+  function forward() {
+    if (!tour || !overlay) return;
+    if (tour.beat < beatsFor(tour.index).length) {
+      tour.beat++;
+      save();
+      updateRemote();
+      overlay.reveal(tour.beat, { animate: true });
+    } else {
+      nextStop();
+    }
+  }
+  function back() {
+    if (!tour || !overlay) return;
+    if (tour.beat > 1) {
+      tour.beat--;
+      save();
+      updateRemote();
+      overlay.reveal(tour.beat);
+    } else if (tour.index > 0) {
+      show(tour.index - 1, { all: true });
+    }
+  }
+  const nextStop = () => tour && tour.index < tour.stops.length - 1 && show(tour.index + 1);
+  const prevStop = () => tour && tour.index > 0 && show(tour.index - 1, { all: true });
+
+  // Replay the current stop from its first beat.
+  function replay() {
+    if (!tour) return;
+    tour.seen = { ...tour.seen, [tour.index]: false };
+    show(tour.index);
+  }
 
   function end() {
     overlay?.destroy();
@@ -129,9 +186,10 @@
 
   document.addEventListener('keydown', (e) => {
     if (!tour || !overlay || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!['ArrowRight', 'ArrowLeft', 'Escape'].includes(e.key)) return;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
-    if (e.key === 'ArrowRight') next();
-    else if (e.key === 'ArrowLeft') prev();
+    if (e.key === 'ArrowRight') (e.shiftKey ? nextStop : forward)();
+    else if (e.key === 'ArrowLeft') (e.shiftKey ? prevStop : back)();
     else if (e.key === 'Escape') end();
     else return;
     e.preventDefault();
@@ -139,7 +197,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'tourStart') {
-      tour = { ...message.tour, storyboards: message.tour.storyboards || {}, index: 0 };
+      tour = { ...message.tour, storyboards: message.tour.storyboards || {}, index: 0, beat: 1, seen: {} };
       show(0);
       sendResponse({ ok: true });
     } else if (message.type === 'tourStoryboard' && tour && message.flowIndex === tour.flowIndex && message.prKey === tour.prKey) {
@@ -160,7 +218,7 @@
     chrome.storage.local.get(STORAGE_KEY).then(({ [STORAGE_KEY]: saved }) => {
       if (saved && saved.prKey === currentPR()) {
         tour = saved;
-        show(saved.index);
+        show(saved.index, { all: Boolean(saved.seen?.[saved.index]) });
       }
     });
   }

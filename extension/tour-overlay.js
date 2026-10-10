@@ -133,7 +133,7 @@
     .card a { color: #0b57d0; }
   `;
 
-  function create({ onPrev, onNext, onReplay, onClose }) {
+  function create({ onPrev, onNext, onPrevStop, onNextStop, onReplay, onClose }) {
     // Drawing layer: below GitHub's sticky file header (z-index 5) and page header (11).
     const host = document.createElement('div');
     host.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;z-index:4;pointer-events:none';
@@ -152,10 +152,13 @@
     document.body.appendChild(remoteHost);
     const remoteRoot = remoteHost.attachShadow({ mode: 'open' });
     remoteRoot.innerHTML = `<style>${REMOTE_STYLE}</style><div class="remote"><span class="text"></span>
-      <button class="prev" title="Previous stop (←)">‹</button><button class="next" title="Next stop (→)">›</button>
-      <button class="replay" title="Replay">↻</button><button class="close" title="End tour (Esc)">✕</button></div><div class="card-slot"></div>`;
+      <button class="prev-stop" title="Previous stop (Shift+←)">«</button><button class="prev" title="Back (←)">‹</button>
+      <button class="next" title="Next (→)">›</button><button class="next-stop" title="Next stop (Shift+→)">»</button>
+      <button class="replay" title="Replay this stop">↻</button><button class="close" title="End tour (Esc)">✕</button></div><div class="card-slot"></div>`;
     remoteRoot.querySelector('.prev').onclick = onPrev;
     remoteRoot.querySelector('.next').onclick = onNext;
+    remoteRoot.querySelector('.prev-stop').onclick = onPrevStop;
+    remoteRoot.querySelector('.next-stop').onclick = onNextStop;
     remoteRoot.querySelector('.replay').onclick = onReplay;
     remoteRoot.querySelector('.close').onclick = onClose;
 
@@ -342,13 +345,12 @@
       return { top: Math.min(a.top, top), bottom: Math.max(b.bottom, top + note.offsetHeight) };
     }
 
-    // Redraw what has been played so far, without animation (after layout changes).
+    // Redraw the revealed beats without animation (after layout changes or when stepping back).
+    let drawnTarget = 0; // beats revealed in the current stop
     function redraw() {
       if (!stop || !clear()) return;
-      const n = drawnTarget;
-      for (let i = 0; i < n; i++) drawBeat(i, false);
+      for (let i = 0; i < drawnTarget; i++) drawBeat(i, false);
     }
-    let drawnTarget = 0;
 
     async function ensureVisible(range) {
       const top = range.top - 100;
@@ -357,27 +359,34 @@
       window.scrollTo({ top: Math.max(0, range.top - innerHeight * 0.3), behavior: 'smooth' });
       await sleep(550);
     }
+    const beatRange = (i) => {
+      const cell = geo && rowCell(geo.table, stop.beats[i].lines[0]);
+      if (!cell) return null;
+      const r = docRect(cell.closest('tr').getBoundingClientRect());
+      return { top: r.top, bottom: r.bottom + 60 };
+    };
 
-    async function play() {
+    /**
+     * Shows the first `n` beats of the current stop. Revealing exactly one more beat than
+     * before animates it (after scrolling it into view); anything else is drawn at once.
+     */
+    async function reveal(n, { animate = false } = {}) {
       const token = ++playToken;
-      drawnTarget = 0;
-      if (!clear()) return false;
-      await ensureVisible({ top: geo.first.top, bottom: Math.min(geo.last.bottom, geo.first.top + innerHeight * 0.5) });
-      for (let i = 0; i < stop.beats.length; i++) {
-        if (token !== playToken) return true;
-        // Measure where the beat will be, bring it into view, then draw it.
-        const cell = rowCell(geo.table, stop.beats[i].lines[0]);
-        if (cell) {
-          const r = docRect(cell.closest('tr').getBoundingClientRect());
-          await ensureVisible({ top: r.top, bottom: r.bottom + 60 });
-          if (token !== playToken) return true;
-          redraw(); // positions may have shifted while scrolling
-        }
-        drawnTarget = i + 1;
-        drawBeat(i, true);
-        await sleep(1700);
+      if (!stop) return;
+      n = Math.max(0, Math.min(n, stop.beats.length));
+      if (animate && n === drawnTarget + 1) {
+        const range = beatRange(n - 1);
+        if (range) await ensureVisible(range);
+        if (token !== playToken) return;
+        redraw(); // positions may have shifted while scrolling
+        drawnTarget = n;
+        drawBeat(n - 1, true);
+      } else {
+        drawnTarget = n;
+        redraw();
+        const range = n ? beatRange(n - 1) : null;
+        if (range) ensureVisible(range);
       }
-      return true;
     }
 
     function watch() {
@@ -425,12 +434,15 @@
     }
 
     return {
-      setRemote({ flowTitle, index, total, title, status, canPrev, canNext }) {
+      setRemote({ flowTitle, index, total, title, beat, beats, status, canPrev, canNext, canPrevStop, canNextStop }) {
         remoteRoot.querySelector('.text').innerHTML =
           `<span class="flow">${escapeHtml(flowTitle)}</span><b>Stop ${index + 1} of ${total}: ${escapeHtml(title)}</b>` +
+          (beats > 1 ? `<span class="status">· beat ${beat} of ${beats}</span>` : '') +
           (status ? `<span class="status">· ${escapeHtml(status)}</span>` : '');
         remoteRoot.querySelector('.prev').disabled = !canPrev;
         remoteRoot.querySelector('.next').disabled = !canNext;
+        remoteRoot.querySelector('.prev-stop').disabled = !canPrevStop;
+        remoteRoot.querySelector('.next-stop').disabled = !canNextStop;
       },
       /** Shows a card instead of drawings (e.g. the stop's code isn't in the diff). */
       showCard(html) {
@@ -441,17 +453,31 @@
         notesEl.innerHTML = '';
         remoteRoot.querySelector('.card-slot').innerHTML = html ? `<div class="card">${html}</div>` : '';
       },
-      /** Draws a stop; resolves when its sequence has played (or was replaced). Returns false if its lines aren't on the page. */
-      async showStop(next) {
+      /**
+       * Draws a stop with its first `reveal` beats: animated from the first beat for a new
+       * stop, all at once for one seen before. Returns false if its lines aren't on the page.
+       */
+      async showStop(next, { reveal: n = 1, animate = true } = {}) {
         remoteRoot.querySelector('.card-slot').innerHTML = '';
+        playToken++;
         stop = next;
+        drawnTarget = 0;
         makeRoom(stop.file);
         clipToHeaders();
         watch();
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); // let the forced layout happen
-        return play();
+        if (!clear()) return false;
+        if (animate && n === 1) {
+          await ensureVisible({ top: geo.first.top, bottom: Math.min(geo.last.bottom, geo.first.top + innerHeight * 0.5) });
+          await reveal(1, { animate: true });
+        } else {
+          window.scrollTo({ top: Math.max(0, geo.first.top - 120), behavior: 'instant' });
+          await reveal(n);
+        }
+        return true;
       },
-      replay: () => (stop ? play() : null),
+      /** Shows `n` beats of the current stop (animating if it's the next one). */
+      reveal: (n, options) => reveal(n, options),
       destroy() {
         playToken++;
         removeEventListener('scroll', clipToHeaders);
