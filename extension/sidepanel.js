@@ -592,6 +592,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     if (pageTour?.prKey === message.prKey) pageTour = null;
   } else if (pageTour?.prKey === message.prKey) {
     pageTour.index = message.index;
+    pageTour.paused = false;
     for (const i of Object.keys(pageTour.storyboards)) sendStoryboard(Number(i));
   } else {
     pageTour = { prKey: message.prKey, index: message.index, total: message.total, storyboards: {} };
@@ -601,14 +602,34 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 
 async function loadPageTourStatus() {
   const status = await chrome.tabs.sendMessage(tab.id, { type: 'tourStatus' }).catch(() => null);
-  if (status && status.prKey === pr?.key && pageTour?.prKey !== status.prKey) {
-    pageTour = { ...status, storyboards: {} };
+  if (status && status.prKey === pr?.key && (pageTour?.prKey !== status.prKey || pageTour.paused !== status.paused)) {
+    pageTour = { ...status, storyboards: pageTour?.storyboards || {} };
     renderOverview();
   }
 }
 
+async function resumePageTour() {
+  const res = await chrome.tabs.sendMessage(tab.id, { type: 'tourResume' }).catch(() => null);
+  if (!res?.ok) pageTour = null;
+  else pageTour.paused = false;
+  renderOverview();
+}
+
 function pageTourBanner() {
   const flow = overview?.flows[pageTour.flowIndex];
+  if (pageTour.paused) {
+    const resume = el('button', { type: 'button', textContent: 'Resume tour' });
+    resume.addEventListener('click', resumePageTour);
+    const discard = el('button', { type: 'button', className: 'link', textContent: 'Discard' });
+    discard.addEventListener('click', endPageTour);
+    return el(
+      'div',
+      { className: 'tour-banner' },
+      el('div', { className: 'row' },
+        el('span', { className: 'grow', textContent: `Tour paused${flow ? `: ${flow.title}` : ''} · stop ${pageTour.index + 1} of ${pageTour.total}` }),
+        resume, discard)
+    );
+  }
   const sketched = Object.keys(pageTour.storyboards).length;
   const end = el('button', { type: 'button', className: 'link', textContent: 'End tour' });
   end.addEventListener('click', endPageTour);

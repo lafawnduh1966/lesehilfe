@@ -5,6 +5,10 @@
 (() => {
   const PR_PATH = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
   const STORAGE_KEY = 'pageTour';
+  // Set in this tab's sessionStorage right before a reload the tour itself causes (switching into
+  // single-file mode). Only then does the tour continue by itself; a fresh visit or a manual
+  // reload leaves it paused until it is resumed from the side panel.
+  const RESUME_FLAG = 'lesehilfe-tour-resume';
   const { create, tableFor, rowCell } = globalThis.LesehilfeOverlay;
   // Stop texts come from the agent, which reads untrusted PR content: never insert them as HTML.
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -43,6 +47,7 @@
       if (location.hash !== hash) location.hash = hash;
     } else {
       // Full navigation: the tour resumes from storage after the reload.
+      sessionStorage.setItem(RESUME_FLAG, tour.prKey);
       location.assign(`/${tour.owner}/${tour.repo}/pull/${tour.number}/changes?mode=single${hash}`);
       return false;
     }
@@ -177,7 +182,7 @@
   function end() {
     overlay?.destroy();
     overlay = null;
-    const prKey = tour?.prKey;
+    const prKey = tour?.prKey ?? currentPR();
     tour = null;
     shownKey = null;
     if (alive()) chrome.storage.local.remove(STORAGE_KEY);
@@ -208,20 +213,40 @@
       if (message.index === tour.index && shownKey === `${tour.index}:fallback`) show(tour.index);
     } else if (message.type === 'tourEnd') {
       end();
+    } else if (message.type === 'tourResume') {
+      resumeSaved().then((ok) => sendResponse({ ok }));
+      return true;
     } else if (message.type === 'tourStatus') {
-      sendResponse(tour ? { prKey: tour.prKey, flowIndex: tour.flowIndex, index: tour.index, total: tour.stops.length } : null);
+      if (tour) {
+        sendResponse({ prKey: tour.prKey, flowIndex: tour.flowIndex, index: tour.index, total: tour.stops.length });
+      } else {
+        // A saved tour for this PR that isn't running: the panel offers to resume it.
+        savedTour().then((saved) =>
+          sendResponse(saved ? { prKey: saved.prKey, flowIndex: saved.flowIndex, index: saved.index, total: saved.stops.length, paused: true } : null)
+        );
+        return true;
+      }
     }
   });
 
-  // Resume after a reload (e.g. the switch into single-file mode), only on the tour's PR.
-  if (alive()) {
-    chrome.storage.local.get(STORAGE_KEY).then(({ [STORAGE_KEY]: saved }) => {
-      if (saved && saved.prKey === currentPR()) {
-        tour = saved;
-        show(saved.index, { all: Boolean(saved.seen?.[saved.index]) });
-      }
-    });
+  async function savedTour() {
+    if (!alive()) return null;
+    const { [STORAGE_KEY]: saved } = await chrome.storage.local.get(STORAGE_KEY);
+    return saved && saved.prKey === currentPR() ? saved : null;
   }
+
+  async function resumeSaved() {
+    const saved = await savedTour();
+    if (!saved) return false;
+    tour = saved;
+    show(saved.index, { all: true });
+    return true;
+  }
+
+  // Continue only after a reload the tour caused itself.
+  const resumeFor = sessionStorage.getItem(RESUME_FLAG);
+  sessionStorage.removeItem(RESUME_FLAG);
+  if (resumeFor && resumeFor === currentPR()) resumeSaved();
 
   // Leaving the PR (GitHub navigates without reloading): put the drawings away, keep the tour.
   setInterval(() => {
