@@ -27,11 +27,24 @@ say "Installing helper dependencies…"
 # --- Launcher ----------------------------------------------------------------------------
 mkdir -p "$LESEHILFE_DIR/bin"
 LAUNCHER="$LESEHILFE_DIR/bin/lesehilfe-helper"
+# Chrome starts the helper without your shell's PATH; keep this one so it finds rg, fd and git.
 cat > "$LAUNCHER" <<EOF
 #!/bin/sh
+export PATH="$PATH"
 exec "$NODE" "$REPO_DIR/helper/main.js" "\$@"
 EOF
 chmod +x "$LAUNCHER"
+
+# --- Search tools for the agent (ripgrep, fd) ------------------------------------------
+# Fetched here, from the terminal: when the helper downloads them from inside Chrome, macOS
+# quarantines them and blocks them ("rg" Not Opened).
+if ! command -v rg >/dev/null 2>&1 || ! command -v fd >/dev/null 2>&1; then
+  say "Getting ripgrep/fd for the agent's code search…"
+  PI_CODING_AGENT_DIR="$LESEHILFE_DIR/pi" "$NODE" --input-type=module -e "
+    const m = await import('$REPO_DIR/helper/node_modules/@earendil-works/pi-coding-agent/dist/utils/tools-manager.js');
+    for (const tool of ['rg', 'fd']) await m.ensureTool(tool, (s) => console.log('  ' + s.message));
+  " || say "  (could not fetch them; install with: brew install ripgrep fd)"
+fi
 
 # --- Native messaging registration --------------------------------------------------
 case "$(uname -s)" in

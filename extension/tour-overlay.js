@@ -125,7 +125,7 @@
     .thread textarea { all: unset; box-sizing: border-box; width: 100%; min-height: 34px; padding: 6px 8px; border-radius: 6px; background: #fff;
       border: 1px solid rgba(59,50,0,.25); font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; color: #1f2328; white-space: pre-wrap; }
     .thread .hint { font: 11px -apple-system, sans-serif; opacity: .6; }
-    .badge { position: absolute; width: 18px; height: 18px; border-radius: 50%; background: var(--c); color: #fff; transition: opacity .3s;
+    .badge { position: absolute; min-width: 18px; padding: 0 4px; box-sizing: border-box; width: 18px; height: 18px; border-radius: 50%; background: var(--c); color: #fff; transition: opacity .3s;
       font: 700 11px/18px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
     .badge.enter { opacity: 0; }
     .conn { transition: opacity .5s; }
@@ -144,6 +144,7 @@
     .text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .flow { opacity: .65; margin-right: 6px; }
     b { font-weight: 600; }
+    code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; opacity: .9; }
     .status { opacity: .65; margin-left: 4px; }
     button { all: unset; cursor: pointer; flex: none; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.12); }
     button:hover { background: rgba(255,255,255,.24); }
@@ -164,9 +165,6 @@
     .transition .role { color: #59636e; font-size: 13px; }
     .transition .hint { font-size: 12px; color: #59636e; text-align: right; }
     .transition kbd { font: 11px ui-monospace, monospace; padding: 1px 5px; border: 1px solid #d1d9e0; border-bottom-width: 2px; border-radius: 4px; background: #f6f8fa; }
-    .context { position: fixed; padding: 3px 10px; border-radius: 999px; background: #1f2328; color: #fff; opacity: .88;
-      font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
-    .context[hidden] { display: none; }
   `;
 
   function create({ onPrev, onNext, onPrevStop, onNextStop, onReplay, onClose, onBeatAction, onThreadDraft, onThreadSend }) {
@@ -190,7 +188,7 @@
     remoteRoot.innerHTML = `<style>${REMOTE_STYLE}</style><div class="remote"><span class="text"></span>
       <button class="prev-stop" title="Previous stop (Shift+←)">«</button><button class="prev" title="Back (←)">‹</button>
       <button class="next" title="Next (→)">›</button><button class="next-stop" title="Next stop (Shift+→)">»</button>
-      <button class="replay" title="Replay this stop">↻</button><button class="close" title="End tour (Esc)">✕</button></div><div class="card-slot"></div><div class="context" hidden></div>`;
+      <button class="replay" title="Replay this stop">↻</button><button class="close" title="End tour (Esc)">✕</button></div><div class="card-slot"></div>`;
     remoteRoot.querySelector('.prev').onclick = onPrev;
     remoteRoot.querySelector('.next').onclick = onNext;
     remoteRoot.querySelector('.prev-stop').onclick = onPrevStop;
@@ -253,7 +251,7 @@
       const last = rowCell(table, stop.endLine) || first;
       if (!first) return null;
       const t = docRect(table.getBoundingClientRect());
-      return { table, t, lane: t.right + 16, first: docRect(first.closest('tr').getBoundingClientRect()), last: docRect(last.closest('tr').getBoundingClientRect()), nextFree: 0 };
+      return { table, t, lane: t.right + 16, badges: {}, first: docRect(first.closest('tr').getBoundingClientRect()), last: docRect(last.closest('tr').getBoundingClientRect()), nextFree: 0 };
     }
 
     function clear() {
@@ -388,7 +386,10 @@
       const cellLeft = docRect(cellA.getBoundingClientRect()).left;
       const badge = element(`badge${beat.dim ? ' dim' : ''}`, escapeHtml(label), animate, 250);
       badge.style.setProperty('--c', color);
-      badge.style.left = `${cellLeft - 9}px`;
+      // Several beats on one line: line their badges up to the left instead of stacking them.
+      const onLine = (geo.badges[firstLine] = (geo.badges[firstLine] || 0) + 1) - 1;
+      badge.style.left = `${cellLeft - 9 - onLine * 22}px`;
+      if (label.length > 1) badge.style.width = 'auto';
       badge.style.top = `${a.top + Math.min(a.height, 24) / 2 - 9}px`;
 
       // Sticky note in the margin, as close to its line as the notes above allow.
@@ -528,9 +529,10 @@
     }
 
     return {
-      setRemote({ flowTitle, index, total, title, beat, beats, status, canPrev, canNext, canPrevStop, canNextStop }) {
+      setRemote({ flowTitle, index, total, title, beat, beats, status, where, canPrev, canNext, canPrevStop, canNextStop }) {
         remoteRoot.querySelector('.text').innerHTML =
           `<span class="flow">${escapeHtml(flowTitle)}</span><b>Stop ${index + 1} of ${total}: ${escapeHtml(title)}</b>` +
+          (where ? `<span class="status">· <code>${escapeHtml(where)}</code></span>` : '') +
           (beats > 1 ? `<span class="status">· beat ${beat} of ${beats}</span>` : '') +
           (status ? `<span class="status">· ${escapeHtml(status)}</span>` : '');
         remoteRoot.querySelector('.prev').disabled = !canPrev;
@@ -545,20 +547,7 @@
         svgInk.innerHTML = '';
         shades.innerHTML = '';
         notesEl.innerHTML = '';
-        remoteRoot.querySelector('.context').hidden = true;
         remoteRoot.querySelector('.card-slot').innerHTML = html ? `<div class="card${transition ? ' transition' : ''}">${html}</div>` : '';
-      },
-      /** A small label pinned above the code: which file and function the stop is in. */
-      setContext(text) {
-        const pill = remoteRoot.querySelector('.context');
-        const table = stop && tableFor(stop.file);
-        pill.hidden = !text || !table;
-        if (pill.hidden) return;
-        pill.textContent = text;
-        const headers = [...document.querySelectorAll('[class*="diffHeaderWrapper"], [class*="stickyHeader"]')];
-        const top = Math.max(60, ...headers.map((h) => h.getBoundingClientRect().bottom).filter((b) => b < innerHeight / 2));
-        pill.style.top = `${top + 8}px`;
-        pill.style.left = `${table.getBoundingClientRect().left + 70}px`;
       },
       /**
        * Draws a stop with its first `reveal` beats: animated from the first beat for a new

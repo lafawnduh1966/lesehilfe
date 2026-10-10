@@ -195,6 +195,9 @@ function renderHelperSetup() {
     const s = helper.status;
     root.append(el('span', { className: 'ok', textContent: `✓ v${s.version} · pi ${s.pi}` }));
     if (!s.git) root.append(el('div', { className: 'error', textContent: 'git not found — install git and restart the browser.' }));
+    if (s.tools && (!s.tools.rg || !s.tools.fd)) {
+      root.append(el('div', { className: 'error', textContent: `The agent's code search is limited: ${['rg', 'fd'].filter((t) => !s.tools[t]).join(' and ')} missing. Run install.sh again (or brew install ripgrep fd).` }));
+    }
     return;
   }
   const retry = el('button', { className: 'link', type: 'button', textContent: 'Check again' });

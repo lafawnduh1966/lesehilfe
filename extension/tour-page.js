@@ -263,7 +263,7 @@
     if (status !== 'ok' || frameInfo().key !== f.key) return;
     tour.lastFile = f.file;
     await overlay.showStop({ file: f.file, startLine: f.startLine, endLine: f.endLine, beats: lastView }, { reveal: animate ? 1 : shownCount(f, lastView), animate });
-    overlay.setContext(f.dive ? `${base(f.file)} › ${f.dive.inFunction || f.dive.title}` : `${base(f.file)}${storyboard(tour.index)?.inFunction ? ` › ${storyboard(tour.index).inFunction}()` : ''}`);
+    updateRemote();
   }
 
   // ↓ : the next level of detail for a beat — unfold it, or dive into what it calls (the agent decides).
@@ -424,6 +424,7 @@
       index: tour.index,
       total: tour.stops.length,
       title: f?.dive ? `${stop.title} › ${f.dive.title}` : stop.title,
+      where: f ? `${base(f.file)}${f.dive ? (f.dive.inFunction ? ` › ${f.dive.inFunction}()` : '') : storyboard(tour.index)?.inFunction ? ` › ${storyboard(tour.index).inFunction}()` : ''}` : '',
       beat: f ? f.beat : 0,
       beats,
       status: note || (f?.unfold ? `detail ${f.unfold.levels.length + 1} · ↑ less` : '') || (pending ? `sketching ${tour.stops.length - pending}/${tour.stops.length}` : ''),
@@ -502,7 +503,6 @@
       { file: stop.file, startLine: stop.startLine, endLine: stop.endLine, beats: lastView },
       { reveal: tour.beat, animate: !seenBefore }
     );
-    if (tour?.index === index) overlay.setContext(`${base(stop.file)}${sb?.inFunction ? ` › ${sb.inFunction}()` : ''}`);
   }
 
   // → : continue past a card, reveal the next beat (closing an unfolded one), leave a dive at its

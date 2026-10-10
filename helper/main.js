@@ -5,6 +5,7 @@
 // Requests:  { id, method, params }
 // Responses: { id, result } | { id, error }
 // Events:    { id, event, data }   (progress for a pending request)
+import { searchTools } from './env.js'; // must come first: sets up pi's environment
 import { log, onMessage, send } from './native.js';
 import fs from 'node:fs';
 import { ensurePR, preparePR, cleanupWorktrees, gitVersion, worktreePath } from './repo.js';
@@ -20,6 +21,7 @@ const methods = {
       node: process.version,
       pi: agent.PI_VERSION,
       git: await gitVersion(),
+      tools: searchTools(),
       codex: agent.codexStatus(),
     };
   },
