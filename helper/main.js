@@ -11,7 +11,7 @@ import { ensurePR, preparePR, cleanupWorktrees, gitVersion, worktreePath } from 
 import * as tour from './tour.js';
 import * as agent from './agent.js';
 
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 
 const methods = {
   async status() {
@@ -83,6 +83,36 @@ const methods = {
     );
     tour.saveSubStops(path, overview.createdAt, params.key, stops);
     return stops;
+  },
+
+  // Storyboards for the on-page tour of one flow: cached ones first, then the agent writes the
+  // missing ones; each arrives as a 'storyboard' event ({ index, beats }) as soon as it exists.
+  async storyboards(params, emit) {
+    const { path } = await ensurePR(params, (message) => emit('progress', { message }));
+    const overview = agent.loadOverview(path);
+    const flow = overview?.flows[params.flowIndex];
+    if (!flow) throw new Error('Run Familiarize first.');
+    const cached = tour.loadTours(path, overview.createdAt);
+    const key = (i) => `sb:${params.flowIndex}:${i}`;
+    const missing = [];
+    flow.steps.forEach((_, i) => {
+      if (cached[key(i)] && !params.regenerate) emit('storyboard', { index: i, beats: cached[key(i)] });
+      else missing.push(i);
+    });
+    if (!missing.length) return { missing: [] };
+    emit('progress', { message: null });
+    const left = await agent.storyboards(
+      path,
+      params.model || agent.DEFAULT_MODEL,
+      { flow, stops: flow.steps, only: missing },
+      (stop, beats) => tour.validateStoryboard(path, stop, beats),
+      (index, beats) => {
+        tour.saveTourEntry(path, overview.createdAt, key(index), beats);
+        emit('storyboard', { index, beats });
+      },
+      (data) => emit('agent', data)
+    );
+    return { missing: left };
   },
 
   // Cached sub-stops for every stop of an overview, so the panel can show them without asking.

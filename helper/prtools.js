@@ -106,6 +106,37 @@ export function reportStopsTool(onReport) {
   });
 }
 
+const Beat = Type.Object({
+  lines: Type.Array(Type.Number(), { minItems: 1, maxItems: 2, description: '[line] or [first, last] in the PR head version' }),
+  token: Type.Optional(Type.String({ description: 'Exact text on the first line to mark, e.g. a function name. Omit to mark the whole line(s).' })),
+  shape: Type.Union(['circle', 'underline', 'box', 'bracket'].map((s) => Type.Literal(s)), {
+    description: 'circle/underline/box mark a token; bracket marks a range of lines',
+  }),
+  tone: Type.Union(['neutral', 'good', 'risk'].map((t) => Type.Literal(t)), {
+    description: 'good = the key effect on the happy path; risk = a check, guard or failure path; neutral otherwise',
+  }),
+  note: Type.String({ description: 'Sticky note, at most ~30 words, plain language; **bold** for the key word' }),
+  arrowTo: Type.Optional(Type.Number({ description: 'Draw a control-flow arrow from this beat to another line of the stop (e.g. a revert that unwinds an earlier step)' })),
+  arrowLabel: Type.Optional(Type.String({ description: 'One or two words for that arrow, e.g. "reverts!"' })),
+});
+
+/** Tool the agent calls once per tour stop with its storyboard; `onReport(stopIndex, beats)` receives it. */
+export function reportStoryboardTool(onReport) {
+  return defineTool({
+    name: 'report_storyboard',
+    label: 'Report storyboard',
+    description: 'Submit the storyboard for one tour stop. Call once per stop, in order.',
+    parameters: Type.Object({
+      stop: Type.Number({ description: '1-based stop number' }),
+      beats: Type.Array(Beat, { minItems: 1, maxItems: 5 }),
+    }),
+    async execute(_id, { stop, beats }) {
+      const kept = onReport(stop - 1, beats);
+      return text(`Saved storyboard for stop ${stop}${kept < beats.length ? ` (${beats.length - kept} beats dropped: lines outside the stop)` : ''}.`);
+    },
+  });
+}
+
 /** Tool the agent calls once with its finished overview; `onReport` receives the data. */
 export function reportFlowsTool(onReport) {
   return defineTool({

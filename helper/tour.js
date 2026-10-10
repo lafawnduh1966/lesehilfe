@@ -61,6 +61,45 @@ export async function stopDiff(worktree, { file, startLine, endLine }) {
   return { status: hunks.length ? 'changed' : 'unchanged-here', hunks };
 }
 
+// --- Storyboards ---------------------------------------------------------------------------
+
+/**
+ * Checks an agent-written storyboard against the file: beats must lie within (or right
+ * around) the stop, and tokens must actually appear on their line; otherwise the beat
+ * falls back to marking whole lines rather than pointing at the wrong place.
+ */
+export function validateStoryboard(worktree, stop, beats) {
+  const source = fs.readFileSync(checkedFile(worktree, stop.file), 'utf8').split('\n');
+  const lo = Math.max(1, stop.startLine - 5);
+  const hi = Math.min(source.length, stop.endLine + 5);
+  const inStop = (n) => Number.isInteger(n) && n >= lo && n <= hi;
+  const result = [];
+  for (const beat of beats) {
+    let [first, last = first] = beat.lines.map(Math.round);
+    if (!inStop(first) || !inStop(last) || last < first) continue;
+    const clean = { ...beat };
+    if (clean.token && !source[first - 1].includes(clean.token)) {
+      // The agent is often a line or two off: move the beat to the nearest line with the token.
+      const near = [1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6].map((d) => first + d).find((n) => inStop(n) && source[n - 1]?.includes(clean.token));
+      if (near) {
+        if (clean.arrowTo != null) clean.arrowTo += near - first;
+        last += near - first;
+        first = near;
+      } else {
+        delete clean.token;
+      }
+    }
+    clean.lines = [first, Math.max(first, Math.min(last, hi))];
+    if (!clean.token && clean.shape !== 'bracket') clean.shape = last > first ? 'bracket' : 'underline';
+    if (clean.arrowTo != null && (!inStop(Math.round(clean.arrowTo)) || Math.round(clean.arrowTo) === first)) {
+      delete clean.arrowTo;
+      delete clean.arrowLabel;
+    }
+    result.push(clean);
+  }
+  return result;
+}
+
 // --- Cached sub-stops ("Go deeper") ------------------------------------------------------
 
 function toursPath(worktree) {
@@ -78,7 +117,12 @@ export function loadTours(worktree, overviewCreatedAt) {
 }
 
 export function saveSubStops(worktree, overviewCreatedAt, key, stops) {
-  const all = { ...loadTours(worktree, overviewCreatedAt), [key]: stops };
+  saveTourEntry(worktree, overviewCreatedAt, key, stops);
+}
+
+/** Stores one entry (sub-stops, or a storyboard under "sb:<flow>:<stop>") for this overview run. */
+export function saveTourEntry(worktree, overviewCreatedAt, key, value) {
+  const all = { ...loadTours(worktree, overviewCreatedAt), [key]: value };
   const file = toursPath(worktree);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ overviewCreatedAt, stops: all }, null, 2));

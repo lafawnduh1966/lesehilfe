@@ -1,6 +1,5 @@
 import { helper } from './helper-client.js';
 import { renderMarkdown } from './markdown.js';
-import { createTour } from './tour-view.js';
 
 const $ = (selector) => document.querySelector(selector);
 const PR_PATH = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
@@ -480,7 +479,6 @@ const ACTORS = [
 ];
 
 async function loadOverview() {
-  if (tourView.active) tourView.exit();
   overview = null;
   renderOverview();
   if (!helper.status || !pr) return;
@@ -542,16 +540,91 @@ async function openStep(step) {
   });
 }
 
-const tourView = createTour({
-  el,
-  helper,
-  prParams,
-  getToken,
-  getState: () => ({ pr, tab, overview }),
-  render: () => renderOverview(),
-  onExit: () => renderOverview(),
+// --- Tour on the page --------------------------------------------------------------------
+// The tour itself runs in the content script; the panel starts it and streams the agent's
+// storyboards to it (the helper is only reachable from here).
+
+let pageTour = null; // { prKey, flowIndex, index, total, storyboards: { [i]: beats }, error }
+
+async function startPageTour(flowIndex) {
+  const flow = overview.flows[flowIndex];
+  const key = pr.key;
+  pageTour = { prKey: key, flowIndex, index: 0, total: flow.steps.length, storyboards: {} };
+  renderOverview();
+  const tour = {
+    prKey: key, owner: pr.owner, repo: pr.repo, number: pr.number, sha: overview.sha,
+    flowIndex, flowTitle: flow.title, stops: flow.steps,
+  };
+  const started = await chrome.tabs.sendMessage(tab.id, { type: 'tourStart', tour }).catch(() => null);
+  if (!started) {
+    pageTour.error = 'Could not reach the page — reload the PR tab and try again.';
+    return renderOverview();
+  }
+  try {
+    await helper.call('storyboards', { ...(await prParams()), token: await getToken(), flowIndex }, (event, data) => {
+      if (event !== 'storyboard' || pageTour?.prKey !== key || pageTour.flowIndex !== flowIndex) return;
+      pageTour.storyboards[data.index] = data.beats;
+      sendStoryboard(data.index);
+      renderOverview();
+    });
+  } catch (e) {
+    if (pageTour?.prKey === key) pageTour.error = e.message;
+  }
+  if (pr?.key === key) renderOverview();
+}
+
+function sendStoryboard(index) {
+  const { prKey, flowIndex, storyboards } = pageTour;
+  chrome.tabs.sendMessage(tab.id, { type: 'tourStoryboard', prKey, flowIndex, index, beats: storyboards[index] }).catch(() => {});
+}
+
+function endPageTour() {
+  chrome.tabs.sendMessage(tab.id, { type: 'tourEnd' }).catch(() => {});
+  pageTour = null;
+  renderOverview();
+}
+
+// The page reports each stop it shows. It may have reloaded (switching into single-file
+// mode), losing storyboards sent meanwhile, so send all known ones again.
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.type !== 'tourState' || sender.tab?.id !== tab?.id) return;
+  if (message.ended) {
+    if (pageTour?.prKey === message.prKey) pageTour = null;
+  } else if (pageTour?.prKey === message.prKey) {
+    pageTour.index = message.index;
+    for (const i of Object.keys(pageTour.storyboards)) sendStoryboard(Number(i));
+  } else {
+    pageTour = { prKey: message.prKey, index: message.index, total: message.total, storyboards: {} };
+  }
+  renderOverview();
 });
-document.addEventListener('keydown', (e) => tourView.onKey(e));
+
+async function loadPageTourStatus() {
+  const status = await chrome.tabs.sendMessage(tab.id, { type: 'tourStatus' }).catch(() => null);
+  if (status && status.prKey === pr?.key && pageTour?.prKey !== status.prKey) {
+    pageTour = { ...status, storyboards: {} };
+    renderOverview();
+  }
+}
+
+function pageTourBanner() {
+  const flow = overview?.flows[pageTour.flowIndex];
+  const sketched = Object.keys(pageTour.storyboards).length;
+  const end = el('button', { type: 'button', className: 'link', textContent: 'End tour' });
+  end.addEventListener('click', endPageTour);
+  return el(
+    'div',
+    { className: 'tour-banner' },
+    el('div', { className: 'row' },
+      el('span', { className: 'grow', textContent: `▶ Touring on the page${flow ? `: ${flow.title}` : ''}` }),
+      end),
+    el('div', { className: 'muted small', textContent:
+      `Stop ${pageTour.index + 1} of ${pageTour.total}` +
+      (flow && sketched < pageTour.total && !pageTour.error ? ` · sketching ${sketched}/${pageTour.total} stops — keep this panel open` : '') +
+      ' · ← → on the page to move, Esc to end' }),
+    pageTour.error ? el('div', { className: 'error small', textContent: pageTour.error }) : null
+  );
+}
 
 function flowCard(flow, flowIndex) {
   const steps = el(
@@ -581,7 +654,7 @@ function flowCard(flow, flowIndex) {
     el('p', { className: 'flow-summary', textContent: flow.summary }),
     (() => {
       const take = el('button', { type: 'button', className: 'primary', textContent: 'Take the tour ›' });
-      take.addEventListener('click', () => tourView.start(flowIndex));
+      take.addEventListener('click', () => startPageTour(flowIndex));
       return take;
     })(),
     flow.preconditions ? el('p', { className: 'muted small', textContent: `Preconditions: ${flow.preconditions}` }) : null,
@@ -593,7 +666,6 @@ function renderOverview() {
   const root = $('#overview');
   if (!root || !pr) return;
   root.replaceChildren();
-  if (tourView.active && overview) return tourView.render(root);
   const ready = helper.status?.codex?.signedIn && prMeta[pr.key]?.data;
   const running = familiarizing?.key === pr.key && !familiarizing.error;
 
@@ -620,6 +692,7 @@ function renderOverview() {
     return;
   }
 
+  if (pageTour?.prKey === pr.key) root.append(pageTourBanner());
   root.append(el('p', { className: 'overview-summary', textContent: overview.summary }));
   for (const [actor, label] of ACTORS) {
     const flows = overview.flows.filter((f) => f.actor === actor);
@@ -644,11 +717,9 @@ function renderOverview() {
 }
 
 async function refresh() {
-  const previousKey = pr?.key;
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   pr = tab?.url ? parsePR(tab.url) : null;
-  // Same PR (e.g. GitHub updated the URL while scrolling): keep the tour and overview.
-  if (pr && pr.key === previousKey && tourView.active) return;
+  if (pageTour && pageTour.prKey !== pr?.key) pageTour = null;
   selection = [];
   snippets = [];
   render();
@@ -658,6 +729,7 @@ async function refresh() {
   loadSnippets();
   loadConversation();
   loadOverview();
+  loadPageTourStatus();
   chrome.tabs
     .sendMessage(tab.id, { type: 'getSelection' })
     .then((res) => {

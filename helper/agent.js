@@ -11,7 +11,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { OVERVIEWS_DIR, PI_DIR, WORKTREES_DIR } from './paths.js';
 import { log } from './native.js';
-import { diffTools, reportFlowsTool, reportStopsTool } from './prtools.js';
+import { diffTools, reportFlowsTool, reportStopsTool, reportStoryboardTool } from './prtools.js';
 import { outsideCheckout } from './sandbox.js';
 
 export { outsideCheckout };
@@ -290,7 +290,19 @@ They are at the stop below and want to go deeper. Break it into 2–6 sub-stops 
 
 When done, call report_stops exactly once, then reply with one short sentence.`;
 
-const stopSinks = new Map(); // worktree → receiver for the current report_stops call
+// Report tools of the per-PR tour session deliver into whatever call is currently running.
+const stopSinks = new Map(); // worktree → receiver for report_stops
+const storyboardSinks = new Map(); // worktree → receiver for report_storyboard
+
+function tourSession(cwd, modelId) {
+  return getSession(cwd, modelId, {
+    kind: 'tour',
+    customTools: [
+      reportStopsTool((data) => stopSinks.get(cwd)?.(data)),
+      reportStoryboardTool((stop, beats) => storyboardSinks.get(cwd)?.(stop, beats) ?? 0),
+    ],
+  });
+}
 
 function describeStop(stop, depth) {
   return `${'  '.repeat(depth)}- ${stop.title} — ${stop.file}:${stop.startLine}-${stop.endLine}\n${'  '.repeat(depth)}  ${stop.explanation}`;
@@ -300,10 +312,7 @@ function describeStop(stop, depth) {
 export async function deepen(cwd, modelId, { flow, trail }, emit) {
   let stops = null;
   stopSinks.set(cwd, (data) => (stops = data));
-  const session = await getSession(cwd, modelId, {
-    kind: 'tour',
-    customTools: [reportStopsTool((data) => stopSinks.get(cwd)?.(data))],
-  });
+  const session = await tourSession(cwd, modelId);
   const message = [
     `## Flow: ${flow.title} (${flow.actor})`,
     flow.summary,
@@ -318,4 +327,45 @@ export async function deepen(cwd, modelId, { flow, trail }, emit) {
   }
   if (!stops) throw new Error('The agent finished without sub-stops. Try again.');
   return stops;
+}
+
+// --- Tours: storyboards for the on-page tour ----------------------------------------------
+
+const STORYBOARD = `You are preparing a guided tour through one user flow of this pull request. The reviewer sees the PR's diff on GitHub; for each stop, Lesehilfe draws on the code like a person sketching while explaining: it circles, underlines, boxes or brackets the important places in order and puts a short sticky note next to each.
+
+For every stop below, write a storyboard of 2–5 beats, in the order a reader should look at the code:
+- Prefer marking a **token** (a call, a variable, a condition): circle a call or name, underline an effect, box a check. At least half of the beats should mark a token. Use a bracket only when several lines together form one idea (e.g. a multi-line call), never just to cover a block.
+- token must be exact text from that line in the PR head (one identifier or short expression); read the file to be sure of line numbers.
+- Notes are sticky notes that tell the story of the flow: plain language, at most ~25 words, one idea each, **bold** for the key word. Use connective words across beats ("first…", "then…", "only now…") so they read as a sequence, not a code listing.
+- tone: good for the key effect on the happy path, risk for checks, guards and failure paths, neutral otherwise.
+- arrowTo/arrowLabel: when a later check reverts or unwinds an earlier effect within the stop (e.g. a final payment check that undoes the mint), draw that arrow from the check to the effect.
+- Stay within the stop's line range.
+
+Call report_storyboard once per stop, in order (stop numbers as listed), then reply with one short sentence.`;
+
+/**
+ * Writes storyboards for `stops` of a flow in one agent run. `onStoryboard(index, beats)`
+ * receives each validated storyboard as soon as the agent reports it.
+ */
+export async function storyboards(cwd, modelId, { flow, stops, only }, validate, onStoryboard, emit) {
+  const wanted = only ?? stops.map((_, i) => i);
+  const done = new Set();
+  storyboardSinks.set(cwd, (index, beats) => {
+    if (!wanted.includes(index) || done.has(index)) return 0;
+    const kept = validate(stops[index], beats);
+    done.add(index);
+    onStoryboard(index, kept);
+    return kept.length;
+  });
+  const session = await tourSession(cwd, modelId);
+  const list = wanted
+    .map((i) => `${i + 1}. ${stops[i].title} — ${stops[i].file}:${stops[i].startLine}-${stops[i].endLine}\n   ${stops[i].explanation}`)
+    .join('\n');
+  const message = [`## Flow: ${flow.title} (${flow.actor})`, flow.summary, `## Stops`, list, `## Task\n\n${STORYBOARD}`].join('\n\n');
+  try {
+    await run(session, message, emit);
+  } finally {
+    storyboardSinks.delete(cwd);
+  }
+  return wanted.filter((i) => !done.has(i));
 }
