@@ -549,11 +549,13 @@ let pageTour = null; // { prKey, flowIndex, index, total, storyboards: { [i]: be
 async function startPageTour(flowIndex) {
   const flow = overview.flows[flowIndex];
   const key = pr.key;
-  pageTour = { prKey: key, flowIndex, index: 0, total: flow.steps.length, storyboards: {} };
+  // Start with the storyboards already saved, so the first card doesn't change right after it appears.
+  const cached = await helper.call('cachedStoryboards', { owner: pr.owner, repo: pr.repo, number: pr.number, flowIndex }).catch(() => ({}));
+  pageTour = { prKey: key, flowIndex, index: 0, total: flow.steps.length, storyboards: { ...cached } };
   renderOverview();
   const tour = {
     prKey: key, owner: pr.owner, repo: pr.repo, number: pr.number, sha: overview.sha,
-    flowIndex, flowTitle: flow.title, flowSummary: flow.summary, stops: flow.steps,
+    flowIndex, flowTitle: flow.title, flowSummary: flow.summary, stops: flow.steps, storyboards: { ...cached },
   };
   const started = await chrome.tabs.sendMessage(tab.id, { type: 'tourStart', tour }).catch(() => null);
   if (!started) {
@@ -563,6 +565,7 @@ async function startPageTour(flowIndex) {
   try {
     await helper.call('storyboards', { ...(await prParams()), token: await getToken(), flowIndex }, (event, data) => {
       if (event !== 'storyboard' || pageTour?.prKey !== key || pageTour.flowIndex !== flowIndex) return;
+      if (cached[data.index]) return; // already sent with tourStart
       pageTour.storyboards[data.index] = data.storyboard;
       sendStoryboard(data.index);
       renderOverview();

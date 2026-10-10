@@ -85,6 +85,20 @@ const methods = {
     return stops;
   },
 
+  // Storyboards already saved for a flow ({ [index]: storyboard }); no git, no agent.
+  cachedStoryboards({ owner, repo, number, flowIndex }) {
+    const path = worktreePath(owner, repo, number);
+    const overview = agent.loadOverview(path);
+    if (!overview?.flows[flowIndex]) return {};
+    const cached = tour.loadTours(path, overview.createdAt);
+    const result = {};
+    overview.flows[flowIndex].steps.forEach((_, i) => {
+      const hit = cached[`sb:${flowIndex}:${i}`];
+      if (hit && !Array.isArray(hit)) result[i] = hit;
+    });
+    return result;
+  },
+
   // Storyboards for the on-page tour of one flow: cached ones first, then the agent writes the
   // missing ones; each arrives as a 'storyboard' event ({ index, beats }) as soon as it exists.
   async storyboards(params, emit) {
