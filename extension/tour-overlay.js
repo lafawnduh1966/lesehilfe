@@ -370,12 +370,13 @@
       for (let i = 0; i < drawnTarget; i++) drawBeat(i, false);
     }
 
-    async function ensureVisible(range) {
+    // Smooth when a beat is being animated in; instant when showing something already seen.
+    async function ensureVisible(range, { smooth = true } = {}) {
       const top = range.top - 100;
       const bottom = range.bottom + 120;
       if (top >= scrollY + 60 && bottom <= scrollY + innerHeight - 60) return;
-      window.scrollTo({ top: Math.max(0, range.top - innerHeight * 0.3), behavior: 'smooth' });
-      await sleep(550);
+      window.scrollTo({ top: Math.max(0, range.top - innerHeight * 0.3), behavior: smooth ? 'smooth' : 'instant' });
+      if (smooth) await sleep(550);
     }
     const beatRange = (i) => {
       const cell = geo && rowCell(geo.table, stop.beats[i].lines[0]);
@@ -401,9 +402,9 @@
         drawBeat(n - 1, true);
       } else {
         drawnTarget = n;
-        redraw();
         const range = n ? beatRange(n - 1) : null;
-        if (range) ensureVisible(range);
+        if (range) await ensureVisible(range, { smooth: false });
+        redraw();
       }
     }
 
