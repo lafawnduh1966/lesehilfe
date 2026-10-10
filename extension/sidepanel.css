@@ -227,3 +227,21 @@ select {
   background: var(--bg);
   color: var(--text);
 }
+
+/* Overview */
+.overview-summary { margin: 0 0 8px; }
+h3.actor { font-size: 12px; margin: 12px 0 4px; color: var(--muted); }
+.flow { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; background: var(--surface); }
+.flow > summary { display: flex; gap: 8px; align-items: baseline; margin: 0; color: var(--text); font-size: 13px; font-weight: 600; }
+.flow > summary > span:first-child { flex: 1; }
+.flow[open] > summary { margin-bottom: 6px; }
+.flow-summary { margin: 0 0 6px; }
+.tag { flex: none; font-size: 11px; font-weight: 500; padding: 0 6px; border-radius: 10px; border: 1px solid var(--border); color: var(--muted); }
+.tag.new { color: var(--primary); border-color: var(--primary); }
+.steps { margin: 6px 0 0; padding-left: 20px; }
+.steps li { margin-bottom: 8px; }
+.step-file { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: left; overflow-wrap: anywhere; }
+.step-text { font-size: 12px; }
+.overview-meta { margin-top: 8px; }
+#overview .tool { font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#overview .tool::before { content: "↳ "; }

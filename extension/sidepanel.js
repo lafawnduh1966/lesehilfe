@@ -100,6 +100,7 @@ function render() {
 }
 
 function renderPR() {
+  renderOverview();
   const root = $('#pr');
   root.replaceChildren();
   if (!pr) return;
@@ -178,6 +179,9 @@ function buildContext(list = snippets) {
   if (d) {
     parts.push(`Author: ${d.author} · ${d.base} ← ${d.head} · ${d.changedFiles} files changed (+${d.additions} −${d.deletions})`);
     parts.push(`## Description\n\n${d.body?.trim() || '(no description)'}`);
+  }
+  if (overview?.flows?.length) {
+    parts.push(`## User flows (from Lesehilfe's earlier overview)\n\n${overview.flows.map((f) => `- ${f.title} (${f.actor}, ${f.change}): ${f.summary}`).join('\n')}`);
   }
   if (list.length) {
     parts.push('## Selected code');
@@ -350,7 +354,8 @@ function scheduleConversationRender() {
 
 async function prParams() {
   const { model } = await chrome.storage.local.get('model');
-  return { owner: pr.owner, repo: pr.repo, number: pr.number, model: model || helper.status?.codex.defaultModel };
+  const base = prMeta[pr.key]?.data?.base;
+  return { owner: pr.owner, repo: pr.repo, number: pr.number, base, model: model || helper.status?.codex.defaultModel };
 }
 
 async function ask() {
@@ -460,6 +465,7 @@ async function loadPRMeta(p) {
         additions: d.additions,
         deletions: d.deletions,
         changedFiles: d.changed_files,
+        headSha: d.head?.sha,
         state: d.merged_at ? 'merged' : d.state,
       },
     };
@@ -480,6 +486,165 @@ function saveSnippets(next) {
   return chrome.storage.local.set({ [`snippets:${pr.key}`]: next });
 }
 
+// --- Overview: user flows ---------------------------------------------------------------
+
+let overview = null; // stored overview for the current PR
+let familiarizing = null; // { key, started, actions: [], error } while running
+let familiarizeTimer = null;
+
+const ACTORS = [
+  ['user', 'Users'],
+  ['operator', 'Operators'],
+  ['admin', 'Admins'],
+  ['system', 'System'],
+];
+
+async function loadOverview() {
+  overview = null;
+  renderOverview();
+  if (!helper.status || !pr) return;
+  const key = pr.key;
+  try {
+    const result = await helper.call('overview', await prParams());
+    if (pr?.key === key) overview = result;
+  } catch (e) {
+    console.warn('overview failed', e);
+  }
+  if (pr?.key === key) {
+    renderOverview();
+    renderPreview();
+  }
+}
+
+async function startFamiliarize() {
+  const d = prMeta[pr.key]?.data;
+  const key = pr.key;
+  familiarizing = { key, started: Date.now(), actions: [] };
+  familiarizeTimer = setInterval(renderOverview, 1000);
+  renderOverview();
+  try {
+    const params = {
+      ...(await prParams()),
+      token: await getToken(),
+      pr: { key, title: d?.title, body: d?.body, base: d?.base, head: d?.head },
+    };
+    const result = await helper.call('familiarize', params, (event, data) => {
+      if (event === 'progress' && data.message) familiarizing.actions.push({ name: '', detail: data.message });
+      if (event === 'agent' && data.type === 'tool') familiarizing.actions.push(data);
+    });
+    familiarizing = null;
+    if (pr?.key === key) overview = result;
+  } catch (e) {
+    familiarizing.error = /abort/i.test(e.message) ? 'Stopped.' : e.message;
+  } finally {
+    clearInterval(familiarizeTimer);
+    if (pr?.key === key) {
+      renderOverview();
+      renderPreview();
+    }
+  }
+}
+
+function elapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// Jump to a step: in the diff if the file is shown there, otherwise open it on GitHub at the PR head.
+async function openStep(step) {
+  const shown = await chrome.tabs
+    .sendMessage(tab.id, { type: 'reveal', file: step.file, line: step.startLine, side: 'new' })
+    .catch(() => null);
+  if (shown?.ok) return;
+  chrome.tabs.create({
+    url: `https://github.com/${pr.owner}/${pr.repo}/blob/${overview.sha}/${step.file}#L${step.startLine}-L${step.endLine}`,
+  });
+}
+
+function flowCard(flow) {
+  const steps = el(
+    'ol',
+    { className: 'steps' },
+    ...flow.steps.map((step) => {
+      const location = el('button', {
+        type: 'button',
+        className: 'link step-file',
+        title: 'Show in diff (or on GitHub)',
+        textContent: `${step.file}:${step.startLine}${step.endLine > step.startLine ? `–${step.endLine}` : ''}`,
+      });
+      location.addEventListener('click', () => openStep(step));
+      return el(
+        'li',
+        {},
+        el('div', { className: 'step-title' }, el('strong', { textContent: step.title }), el('span', { className: 'badge', textContent: ` ${step.layer}` })),
+        location,
+        el('div', { className: 'step-text', textContent: step.explanation })
+      );
+    })
+  );
+  return el(
+    'details',
+    { className: 'flow' },
+    el('summary', {}, el('span', { textContent: flow.title }), el('span', { className: `tag ${flow.change}`, textContent: flow.change })),
+    el('p', { className: 'flow-summary', textContent: flow.summary }),
+    flow.preconditions ? el('p', { className: 'muted small', textContent: `Preconditions: ${flow.preconditions}` }) : null,
+    steps
+  );
+}
+
+function renderOverview() {
+  const root = $('#overview');
+  if (!root || !pr) return;
+  root.replaceChildren();
+  const ready = helper.status?.codex?.signedIn && prMeta[pr.key]?.data;
+  const running = familiarizing?.key === pr.key && !familiarizing.error;
+
+  if (running) {
+    const stop = el('button', { type: 'button', textContent: 'Stop' });
+    stop.addEventListener('click', async () => helper.call('abort', { ...(await prParams()), kind: 'familiarize' }).catch(() => {}));
+    const recent = familiarizing.actions.slice(-5);
+    root.append(
+      el('div', { className: 'row' }, el('span', { className: 'grow', textContent: `Familiarizing with the user flows… ${elapsed(Date.now() - familiarizing.started)}` }), stop),
+      el('div', { className: 'muted small', textContent: `${familiarizing.actions.length} steps so far. Large PRs can take several minutes — keep this panel open.` }),
+      ...recent.map((a) => el('div', { className: 'tool', textContent: `${a.name} ${a.detail}`.trim() }))
+    );
+    return;
+  }
+
+  if (!overview) {
+    const button = el('button', { type: 'button', className: 'primary', textContent: 'Familiarize', disabled: !ready });
+    button.addEventListener('click', startFamiliarize);
+    root.append(
+      el('p', { className: 'hint', textContent: 'Let Lesehilfe study the PR and map the user flows it introduces or changes.' }),
+      button
+    );
+    if (familiarizing?.key === pr.key && familiarizing.error) root.append(el('p', { className: 'error', textContent: familiarizing.error }));
+    return;
+  }
+
+  root.append(el('p', { className: 'overview-summary', textContent: overview.summary }));
+  for (const [actor, label] of ACTORS) {
+    const flows = overview.flows.filter((f) => f.actor === actor);
+    if (!flows.length) continue;
+    root.append(el('h3', { className: 'actor', textContent: `${label} (${flows.length})` }), ...flows.map(flowCard));
+  }
+  if (overview.openQuestions?.length) {
+    root.append(
+      el('details', { className: 'flow' }, el('summary', { textContent: `Open questions (${overview.openQuestions.length})` }),
+        el('ul', {}, ...overview.openQuestions.map((q) => el('li', { textContent: q }))))
+    );
+  }
+  const head = prMeta[pr.key]?.data?.headSha;
+  const outdated = head && head !== overview.sha;
+  const rerun = el('button', { className: 'link', type: 'button', textContent: outdated ? 'PR changed — re-run' : 'Re-run', disabled: !ready });
+  rerun.addEventListener('click', startFamiliarize);
+  root.append(
+    el('div', { className: 'muted small overview-meta' },
+      document.createTextNode(`Based on ${overview.sha.slice(0, 7)} · ${overview.model} · ${new Date(overview.createdAt).toLocaleString()} · `),
+      rerun)
+  );
+}
+
 async function refresh() {
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   pr = tab?.url ? parsePR(tab.url) : null;
@@ -491,6 +656,7 @@ async function refresh() {
   loadPRMeta(pr);
   loadSnippets();
   loadConversation();
+  loadOverview();
   chrome.tabs
     .sendMessage(tab.id, { type: 'getSelection' })
     .then((res) => {
@@ -686,7 +852,10 @@ async function renderModelSelect() {
 helper.onChange(() => {
   renderSetup();
   renderModelSelect();
-  if (pr) loadConversation();
+  if (pr) {
+    loadConversation();
+    loadOverview();
+  }
 });
 
 renderAccount();

@@ -9,8 +9,9 @@ import {
   SettingsManager,
   VERSION as PI_VERSION,
 } from '@earendil-works/pi-coding-agent';
-import { PI_DIR } from './paths.js';
+import { OVERVIEWS_DIR, PI_DIR, WORKTREES_DIR } from './paths.js';
 import { log } from './native.js';
+import { diffTools, reportFlowsTool } from './prtools.js';
 
 export { PI_VERSION };
 
@@ -126,10 +127,15 @@ const confineToCheckout = (root) => (pi) => {
 
 // --- Sessions -------------------------------------------------------------------
 
-const sessions = new Map(); // worktree path → { session, modelId }
+const sessions = new Map(); // `${kind}:${worktree}` → { session, modelId }
 
-async function getSession(cwd, modelId, { fresh = false } = {}) {
-  const existing = sessions.get(cwd);
+/**
+ * One persistent session per PR and kind: 'chat' (questions from the panel) and
+ * 'familiarize' (building the overview; always started fresh).
+ */
+async function getSession(cwd, modelId, { fresh = false, kind = 'chat', thinkingLevel = 'medium', customTools = [] } = {}) {
+  const key = `${kind}:${cwd}`;
+  const existing = sessions.get(key);
   if (existing && !fresh) {
     if (existing.modelId !== modelId) {
       const model = modelRuntime.getModel(PROVIDER, modelId);
@@ -160,19 +166,21 @@ async function getSession(cwd, modelId, { fresh = false } = {}) {
   });
   await resourceLoader.reload();
 
-  const sessionDir = path.join(PI_DIR, 'sessions');
+  const tools = [...diffTools(cwd), ...customTools];
+  const sessionDir = path.join(PI_DIR, 'sessions', kind);
   const { session } = await createAgentSession({
     cwd,
     agentDir: PI_DIR,
     model,
-    thinkingLevel: 'medium',
-    tools: TOOLS,
+    thinkingLevel,
+    tools: [...TOOLS, ...tools.map((t) => t.name)],
+    customTools: tools,
     modelRuntime,
     resourceLoader,
     settingsManager,
     sessionManager: fresh ? SessionManager.create(cwd, sessionDir) : SessionManager.continueRecent(cwd, sessionDir),
   });
-  sessions.set(cwd, { session, modelId });
+  sessions.set(key, { session, modelId });
   return session;
 }
 
@@ -195,12 +203,18 @@ function summarizeArgs(name, args = {}) {
   if (name === 'grep') return `"${args.pattern}"${args.path ? ` in ${args.path}` : ''}`;
   if (name === 'find') return `${args.pattern || ''}${args.path ? ` in ${args.path}` : ''}`;
   if (name === 'ls') return args.path || '.';
+  if (name === 'pr_changed_files') return args.path || '';
+  if (name === 'pr_diff') return args.path || '';
   return '';
 }
 
 /** Sends a message and streams { type: 'text', delta } / { type: 'tool', name, detail } to `emit`. */
 export async function ask(cwd, modelId, message, emit, { fresh = false } = {}) {
   const session = await getSession(cwd, modelId, { fresh });
+  await run(session, message, emit);
+}
+
+async function run(session, message, emit) {
   if (session.isStreaming) throw new Error('Still answering the previous question.');
 
   let error = null;
@@ -222,6 +236,66 @@ export async function ask(cwd, modelId, message, emit, { fresh = false } = {}) {
   if (error) throw new Error(error);
 }
 
-export async function abort(cwd) {
-  await sessions.get(cwd)?.session.abort();
+export async function abort(cwd, kind = 'chat') {
+  await sessions.get(`${kind}:${cwd}`)?.session.abort();
+}
+
+// --- Familiarize: user-flow overview ---------------------------------------------------
+
+const FAMILIARIZE = `Familiarize yourself with this pull request from the USER FLOW perspective, so you can later guide a reviewer through it.
+
+A flow is something an actor can now do (or does differently) end to end — e.g. "user mints X atomically while using debt to pay part of it", "operator funds redemptions", "admin configures limits". Actors:
+- user: end users, counterparties, integrators
+- operator: people or bots running the system day to day
+- admin: configuration and governance
+- system: scheduled or automatic processes
+
+How to work (be efficient — do not read every file):
+1. Use pr_changed_files to see the shape of the PR.
+2. Read added or changed docs, and end-to-end / journey / integration tests first — they often describe flows explicitly.
+3. Find the entry points actors use: UI routes and pages, API endpoints, scripts, external/public contract functions, scheduled jobs.
+4. For each flow, trace its path through the layers (UI → API → backend → contracts) using pr_diff, grep and read.
+
+What to report:
+- Usually 4–12 flows. Keep materially different variants separate when their code paths differ (e.g. different tokens or with/without leverage); otherwise mention variants in the summary.
+- 3–8 steps per flow, in execution order, each pointing at the most relevant code in the PR head (path and line range), preferring code the PR adds or changes. Tests are evidence, not steps.
+- Explanations should help someone who has never seen this code.
+- Note open questions a reviewer should raise.
+
+When done, call report_flows exactly once with the complete overview, then reply with one short sentence.`;
+
+function overviewPath(cwd) {
+  return path.join(OVERVIEWS_DIR, `${path.relative(WORKTREES_DIR, cwd)}.json`); // <owner>/<repo>/pr-<n>.json
+}
+
+export function loadOverview(cwd) {
+  try {
+    return JSON.parse(fs.readFileSync(overviewPath(cwd), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Builds the user-flow overview for a prepared PR and stores it next to the other PR data. */
+export async function familiarize(cwd, modelId, { sha, baseSha, pr }, emit) {
+  let overview = null;
+  const session = await getSession(cwd, modelId, {
+    kind: 'familiarize',
+    fresh: true,
+    thinkingLevel: 'high',
+    customTools: [reportFlowsTool((data) => (overview = data))],
+  });
+  const context = [
+    `# Pull request ${pr.key}: ${pr.title || ''}`.trim(),
+    pr.base && pr.head ? `Branches: ${pr.base} ← ${pr.head}` : '',
+    `## Description\n\n${pr.body?.trim() || '(no description)'}`,
+  ].filter(Boolean);
+  await run(session, `${context.join('\n\n')}\n\n## Task\n\n${FAMILIARIZE}`, emit);
+  if (!overview) throw new Error('The agent finished without reporting any flows. Try again.');
+
+  const result = { ...overview, sha, baseSha, model: session.model?.id ?? modelId, createdAt: new Date().toISOString() };
+  const file = overviewPath(cwd);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(result, null, 2));
+  return result;
 }

@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import { preparePR, cleanupWorktrees, gitVersion, worktreePath } from './repo.js';
 import * as agent from './agent.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 const methods = {
   async status() {
@@ -48,8 +48,22 @@ const methods = {
     return { sha };
   },
 
-  async abort({ owner, repo, number }) {
-    await agent.abort(worktreePath(owner, repo, number));
+  async abort({ owner, repo, number, kind }) {
+    await agent.abort(worktreePath(owner, repo, number), kind);
+  },
+
+  // Stored user-flow overview for a PR, or null.
+  overview({ owner, repo, number }) {
+    return agent.loadOverview(worktreePath(owner, repo, number));
+  },
+
+  async familiarize(params, emit) {
+    if (!params.base) throw new Error('Base branch unknown — is the PR context loaded?');
+    const { path, sha, baseSha } = await preparePR(params, (message) => emit('progress', { message }));
+    emit('progress', { message: null });
+    return agent.familiarize(path, params.model || agent.DEFAULT_MODEL, { sha, baseSha, pr: params.pr || {} }, (data) =>
+      emit('agent', data)
+    );
   },
 };
 

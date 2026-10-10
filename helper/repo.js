@@ -77,9 +77,27 @@ export function worktreePath(owner, repo, number) {
   return path.join(WORKTREES_DIR, owner, repo, `pr-${number}`);
 }
 
-/** Ensures a worktree at the PR head exists. Returns { path, sha }. */
-export function preparePR({ owner, repo, number, token }, progress = () => {}) {
+const BRANCH = /^(?!.*\.\.)[A-Za-z0-9._\/-]+$/;
+
+// Per checkout: what the diff tools need (bare repo, head/base commits, git credentials).
+const prState = new Map();
+export const getPRState = (worktree) => prState.get(worktree);
+
+/** Runs git in a PR's bare repo with the credentials that worked for fetching. */
+export function prGit(worktree, args) {
+  const state = prState.get(worktree);
+  if (!state) throw new Error('PR is not prepared.');
+  return git(args, { cwd: state.bare, env: state.env });
+}
+
+/**
+ * Ensures a worktree at the PR head exists. With `base` (the PR's base branch),
+ * also fetches it so the PR's diff can be computed locally.
+ * Returns { path, sha, baseSha } (baseSha = merge base, or null without `base`).
+ */
+export function preparePR({ owner, repo, number, token, base }, progress = () => {}) {
   const worktree = worktreePath(owner, repo, number);
+  if (base != null && !BRANCH.test(base)) throw new Error('Invalid base branch');
 
   return locked(`${owner}/${repo}`, async () => {
     const bare = path.join(REPOS_DIR, owner, `${repo}.git`);
@@ -99,11 +117,14 @@ export function preparePR({ owner, repo, number, token }, progress = () => {}) {
     }
 
     progress(`Fetching PR #${number}…`);
+    const baseRef = base ? `refs/lesehilfe/base/${base}` : null;
+    const refspecs = [`+refs/pull/${number}/head:${ref}`, ...(base ? [`+refs/heads/${base}:${baseRef}`] : [])];
     const env = await withStrategies(owner, repo, token, async (s) => {
-      await git(['fetch', '--quiet', '--filter=blob:none', s.url, `+refs/pull/${number}/head:${ref}`], { cwd: bare, env: s.env });
+      await git(['fetch', '--quiet', '--filter=blob:none', s.url, ...refspecs], { cwd: bare, env: s.env });
       return s.env;
     });
     const sha = await git(['rev-parse', ref], { cwd: bare });
+    const baseSha = base ? await git(['merge-base', baseRef, sha], { cwd: bare }) : prState.get(worktree)?.baseSha ?? null;
 
     progress('Checking out PR code…');
     // Checkout may lazily fetch file contents from origin, so reuse the working credentials.
@@ -116,7 +137,8 @@ export function preparePR({ owner, repo, number, token }, progress = () => {}) {
       await git(['worktree', 'add', '--quiet', '--detach', worktree, sha], { cwd: bare, env });
     }
     fs.utimesSync(worktree, new Date(), new Date());
-    return { path: worktree, sha };
+    prState.set(worktree, { bare, env, sha, baseSha });
+    return { path: worktree, sha, baseSha };
   });
 }
 /** Removes PR worktrees that haven't been used for a while. */

@@ -33,6 +33,10 @@ Then click the reload icon on Lesehilfe in `chrome://extensions`.
 
 ## Use
 
+**Familiarize** (Overview section): Lesehilfe studies the PR — its description, changed docs, journey/e2e tests and entry points — and maps the **user flows** it introduces or changes, grouped by actor (users, operators, admins, system). Each flow lists its steps through the code with file and line references; click one to jump to it in the diff (or on GitHub). Takes a few minutes for large PRs; the result is saved per PR and also given to the agent as context for your questions.
+
+Then, for detail:
+
 1. On a PR's **Files changed** tab, select code and click **+ Add to Lesehilfe** (or **+ Add to snippets** in the panel). Collect as many snippets as you like, across files.
 2. Click **Explain**, or type a question first. Follow-up questions keep the conversation going; **New conversation** starts fresh.
 3. Click a snippet's file name to jump back to it in the diff.
@@ -52,8 +56,10 @@ Side panel ──native messaging──▶ helper (Node, ~/lesehilfe/helper)
 - **Local data** in `~/.lesehilfe/`:
   - `repos/<owner>/<repo>.git` — partial bare clones (file contents only for checked-out commits; typically tens of MB). Dependencies are never installed.
   - `worktrees/<owner>/<repo>/pr-<n>` — the PR's code, removed after 14 days unused.
+  - `overviews/<owner>/<repo>/pr-<n>.json` — user-flow overviews from Familiarize.
   - `pi/` — ChatGPT sign-in and conversation history (separate from your own pi setup).
   - `helper.log`
+- **The PR's diff** is computed locally against the merge base with the base branch (GitHub's API refuses diffs over 20,000 lines); the agent reads it through two read-only tools, `pr_changed_files` and `pr_diff`.
 - **Cloning** uses your GitHub sign-in from the extension, falling back to your git credentials or SSH. Your own clones are never touched.
 
 ### Safety
