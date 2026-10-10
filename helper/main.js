@@ -11,7 +11,7 @@ import { ensurePR, preparePR, cleanupWorktrees, gitVersion, worktreePath } from 
 import * as tour from './tour.js';
 import * as agent from './agent.js';
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 
 const methods = {
   async status() {
@@ -129,6 +129,28 @@ const methods = {
       (data) => emit('agent', data)
     );
     return { missing: left };
+  },
+
+  // Next level of detail for a beat of the on-page tour (cached per frame, beat and level).
+  async zoom(params, emit) {
+    const { path } = await ensurePR(params, (message) => emit('progress', { message }));
+    const overview = agent.loadOverview(path);
+    const flow = overview?.flows[params.flowIndex];
+    const stop = flow?.steps[params.stopIndex];
+    if (!stop) throw new Error('Run Familiarize first.');
+    const key = `zoom:${params.flowIndex}:${params.frameKey}:${params.beatIndex}:${params.history.length + 2}`;
+    const cached = tour.loadTours(path, overview.createdAt)[key];
+    if (cached && !params.regenerate) return cached;
+    emit('progress', { message: null });
+    const result = await agent.zoom(
+      path,
+      params.model || agent.DEFAULT_MODEL,
+      { flow, stop, frame: params.frame, beat: params.beat, history: params.history },
+      (report) => tour.validateZoom(path, params.frame, params.beat, report),
+      (data) => emit('agent', data)
+    );
+    tour.saveTourEntry(path, overview.createdAt, key, result);
+    return result;
   },
 
   // Cached sub-stops for every stop of an overview, so the panel can show them without asking.

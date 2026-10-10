@@ -133,6 +133,34 @@ export function validateStoryboard(worktree, stops, index, storyboard) {
   };
 }
 
+/**
+ * Checks a zoom report: unfold marks must lie around the beat, a dive must point at real
+ * lines in a file of the checkout. Returns null when nothing usable is left.
+ */
+export function validateZoom(worktree, frame, beat, report) {
+  if (report.mode === 'dive' && report.file && report.startLine) {
+    const file = report.file.replace(/^\/+/, '');
+    let source;
+    try {
+      source = fs.readFileSync(checkedFile(worktree, file), 'utf8').split('\n');
+    } catch {
+      source = null;
+    }
+    if (source) {
+      const startLine = Math.max(1, Math.min(Math.round(report.startLine), source.length));
+      const endLine = Math.max(startLine, Math.min(Math.round(report.endLine || startLine + 10), source.length));
+      const sub = { file, startLine, endLine };
+      const { beats } = validateStoryboard(worktree, [sub], 0, { beats: report.beats || [] });
+      if (beats.length) return { mode: 'dive', title: report.title || `Inside ${report.inFunction || file.split('/').pop()}`, file, startLine, endLine, inFunction: report.inFunction || '', beats };
+    }
+  }
+  const [first, last = first] = beat.lines;
+  const around = { file: frame.file, startLine: Math.max(1, first - 12), endLine: last + 12 };
+  const { beats: marks } = validateStoryboard(worktree, [around], 0, { beats: report.marks || [] });
+  if (!report.detail && !marks.length) return null;
+  return { mode: 'unfold', detail: report.detail || '', marks, canGoDeeper: report.canGoDeeper !== false };
+}
+
 // --- Cached sub-stops ("Go deeper") ------------------------------------------------------
 
 function toursPath(worktree) {

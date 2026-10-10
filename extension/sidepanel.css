@@ -284,3 +284,5 @@ body.touring #setup { display: none; }
 .beat.tone-good::marker { color: #1a7f37; }
 .beat.tone-risk::marker { color: #cf222e; }
 .beat code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface); padding: 0 3px; border-radius: 3px; }
+
+.zoom-path { margin-top: 4px; padding: 3px 8px; border-radius: 6px; background: #ddf4ff; color: #0969da; display: inline-block; }

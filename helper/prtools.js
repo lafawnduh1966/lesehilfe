@@ -152,6 +152,33 @@ export function reportStoryboardTool(onReport) {
   });
 }
 
+/** Tool for zooming into one beat of a tour: unfold it one level, or dive into a called function. */
+export function reportZoomTool(onReport) {
+  return defineTool({
+    name: 'report_zoom',
+    label: 'Report zoom level',
+    description: 'Submit the next level of detail for the beat the reviewer zoomed into. Call exactly once.',
+    parameters: Type.Object({
+      mode: Type.Union([Type.Literal('unfold'), Type.Literal('dive')], {
+        description: 'unfold = explain the same place one level deeper; dive = follow a call into its definition as a small sub-tour',
+      }),
+      detail: Type.Optional(Type.String({ description: 'unfold: 2–4 sentences, one level more detailed than what the reviewer has seen; **bold** key words' })),
+      marks: Type.Optional(Type.Array(Beat, { maxItems: 3, description: 'unfold: finer marks on the same or nearby lines (arguments, conditions), each with a short note' })),
+      canGoDeeper: Type.Optional(Type.Boolean({ description: 'unfold: whether another level would add real insight' })),
+      title: Type.Optional(Type.String({ description: 'dive: short title of the sub-tour, e.g. "Inside _deliverOutput"' })),
+      file: Type.Optional(Type.String({ description: 'dive: repo-relative file of the definition' })),
+      startLine: Type.Optional(Type.Number()),
+      endLine: Type.Optional(Type.Number()),
+      inFunction: Type.Optional(Type.String()),
+      beats: Type.Optional(Type.Array(Beat, { minItems: 2, maxItems: 5, description: 'dive: storyboard of the sub-tour' })),
+    }),
+    async execute(_id, report) {
+      onReport(report);
+      return text('Saved.');
+    },
+  });
+}
+
 /** Tool the agent calls once with its finished overview; `onReport` receives the data. */
 export function reportFlowsTool(onReport) {
   return defineTool({

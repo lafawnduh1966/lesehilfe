@@ -75,6 +75,7 @@ export function renderTourMap(root, { el, flow, tour, onGoto, onEnd }) {
 
     if (current) {
       row.append(el('div', { className: 'muted small mono', textContent: fileLine }));
+      if (tour.zoom?.length) row.append(el('div', { className: 'zoom-path small', textContent: `🔍 ${tour.zoom.join(' › ')} · ↑ on the page to zoom out` }));
       if (arrival?.why) row.append(el('div', { className: 'why', textContent: arrival.why }));
       if (tour.phase === 'stop' && tour.notes?.length) {
         const beats = el('ol', { className: 'beats' });

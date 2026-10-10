@@ -343,20 +343,28 @@ async function prParams() {
   return { owner: pr.owner, repo: pr.repo, number: pr.number, base, baseSha, model: model || helper.status?.codex.defaultModel };
 }
 
-async function ask() {
-  const question = $('#question').value.trim();
+/**
+ * Asks the tutor. Without options it sends the panel's question box; the page's tour passes
+ * { question, context, label, onText } to ask about a beat in the same conversation.
+ * Returns the answer text.
+ */
+async function ask(options = {}) {
+  const fromPanel = options.question == null;
+  const question = fromPanel ? $('#question').value.trim() : options.question;
+  if (asking) throw new Error('Still answering the previous question.');
   const fresh = freshNext || !conversation.length;
   const sent = fresh ? new Set() : await sentSnippetIds();
-  const newSnippets = snippets.filter((s) => !sent.has(s.id));
+  const newSnippets = fromPanel ? snippets.filter((s) => !sent.has(s.id)) : [];
 
   // First message carries the PR context; later ones only add new snippets.
   const parts = [];
   if (fresh) parts.push(buildContext(newSnippets));
   else if (newSnippets.length) parts.push(`## Additional selected code\n\n${newSnippets.map(snippetBlock).join('\n\n')}`);
+  if (options.context) parts.push(options.context);
   parts.push(`## Question\n\n${question || 'Explain what the selected code does and how it fits into this PR.'}`);
   const message = parts.join('\n\n');
 
-  const label = [question || 'Explain the selected code', newSnippets.length ? `(+${newSnippets.length} snippet${newSnippets.length > 1 ? 's' : ''})` : '']
+  const label = options.label || [question || 'Explain the selected code', newSnippets.length ? `(+${newSnippets.length} snippet${newSnippets.length > 1 ? 's' : ''})` : '']
     .join(' ')
     .trim();
   if (fresh) conversation = [];
@@ -364,8 +372,9 @@ async function ask() {
   const answer = { role: 'assistant', parts: [] };
   conversation.push(answer);
   asking = true;
-  $('#question').value = '';
+  if (fromPanel) $('#question').value = '';
   renderConversation();
+  const answerText = () => answer.parts.filter((p) => p.type === 'text').map((p) => p.text).join('');
 
   const status = $('#ask-status');
   const key = pr.key;
@@ -385,17 +394,20 @@ async function ask() {
         }
         status.hidden = true;
         scheduleConversationRender();
+        if (data.type === 'text') options.onText?.(answerText());
       }
     });
     freshNext = false;
     await markSent([...sent, ...newSnippets.map((s) => s.id)]);
   } catch (e) {
     answer.parts.push({ type: 'text', text: `**Error:** ${e.message}` });
+    if (!fromPanel) throw e;
   } finally {
     asking = false;
     status.hidden = true;
     if (pr?.key === key) renderConversation();
   }
+  return answerText();
 }
 
 async function loadConversation() {
@@ -593,6 +605,53 @@ function endPageTour() {
   pageTour = null;
   renderOverview();
 }
+
+// The page asks about a beat: answer in the panel's conversation and stream it back to the sticky.
+async function answerTourQuestion(message, sendBack) {
+  const { question, where, threadKey } = message;
+  const flow = overview?.flows[pageTour?.flowIndex];
+  const context = [
+    '## The question is about this part of the tour',
+    flow ? `Flow "${flow.title}", stop ${where.stopIndex + 1}: "${flow.steps[where.stopIndex]?.title}".` : '',
+    where.frameTitle ? `Zoomed into: ${where.frameTitle} (${where.file}:${where.startLine}-${where.endLine}).` : '',
+    `Beat ${where.label}: lines ${where.lines.join('–')} of ${where.file}${where.token ? `, marking \`${where.token}\`` : ''}.`,
+    `Its sticky note says: "${where.note}"`,
+    'Answer briefly (a few sentences) unless the question asks for more; reference code as path:line.',
+  ].filter(Boolean).join('\n');
+  let last = 0;
+  try {
+    const text = await ask({
+      question,
+      context,
+      label: `💬 Beat ${where.label}${where.token ? ` · ${where.token}` : ''}: ${question}`,
+      onText: (t) => {
+        if (Date.now() - last < 150) return;
+        last = Date.now();
+        sendBack({ threadKey, text: t, done: false });
+      },
+    });
+    sendBack({ threadKey, text, done: true });
+  } catch (e) {
+    sendBack({ threadKey, error: e.message, done: true });
+  }
+}
+
+// The page zooms into a beat: next level of detail from the helper.
+async function zoomTourBeat(message) {
+  const flowIndex = pageTour?.flowIndex;
+  return helper.call('zoom', { ...(await prParams()), token: await getToken(), flowIndex, ...message.request });
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (sender.tab?.id !== tab?.id) return;
+  if (message.type === 'tourAsk') {
+    answerTourQuestion(message, (data) => chrome.tabs.sendMessage(tab.id, { type: 'tourAnswer', ...data }).catch(() => {}));
+    sendResponse({ accepted: true }); // the answer streams back separately
+  } else if (message.type === 'tourZoom') {
+    zoomTourBeat(message).then((result) => sendResponse({ result }), (e) => sendResponse({ error: e.message }));
+    return true;
+  }
+});
 
 // The page reports each stop it shows. It may have reloaded (switching into single-file
 // mode), losing storyboards sent meanwhile, so send all known ones again.
@@ -959,7 +1018,7 @@ chrome.storage.local.get('githubToken').then(({ githubToken }) => {
   if (githubToken) $('#token').placeholder = 'Token saved';
 });
 
-$('#explain').addEventListener('click', ask);
+$('#explain').addEventListener('click', () => ask());
 $('#stop').addEventListener('click', async () => helper.call('abort', await prParams()).catch(() => {}));
 $('#question').addEventListener('input', renderAskControls);
 $('#question').addEventListener('keydown', (e) => {

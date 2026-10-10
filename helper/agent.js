@@ -11,7 +11,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { OVERVIEWS_DIR, PI_DIR, WORKTREES_DIR } from './paths.js';
 import { log } from './native.js';
-import { diffTools, reportFlowsTool, reportStopsTool, reportStoryboardTool } from './prtools.js';
+import { diffTools, reportFlowsTool, reportStopsTool, reportStoryboardTool, reportZoomTool } from './prtools.js';
 import { outsideCheckout } from './sandbox.js';
 
 export { outsideCheckout };
@@ -293,6 +293,7 @@ When done, call report_stops exactly once, then reply with one short sentence.`;
 // Report tools of the per-PR tour session deliver into whatever call is currently running.
 const stopSinks = new Map(); // worktree → receiver for report_stops
 const storyboardSinks = new Map(); // worktree → receiver for report_storyboard
+const zoomSinks = new Map(); // worktree → receiver for report_zoom
 
 function tourSession(cwd, modelId) {
   return getSession(cwd, modelId, {
@@ -300,6 +301,7 @@ function tourSession(cwd, modelId) {
     customTools: [
       reportStopsTool((data) => stopSinks.get(cwd)?.(data)),
       reportStoryboardTool((stop, beats) => storyboardSinks.get(cwd)?.(stop, beats) ?? 0),
+      reportZoomTool((report) => zoomSinks.get(cwd)?.(report)),
     ],
   });
 }
@@ -376,4 +378,38 @@ export async function storyboards(cwd, modelId, { flow, stops, only }, validate,
     storyboardSinks.delete(cwd);
   }
   return wanted.filter((i) => !done.has(i));
+}
+
+// --- Tours: zooming into a beat -------------------------------------------------------------
+
+const ZOOM = `The reviewer is on a guided tour and zoomed into one beat (one sticky note on the code) to see it in more detail.
+
+Give them the NEXT level of detail — only one level more than they have seen, never everything at once:
+- mode "unfold": explain the same place one level deeper in 2–4 sentences (what exactly happens, which check or value matters, an edge case), and optionally mark up to 3 finer places on the same or nearby lines (an argument, a condition, a return value) with short notes.
+- mode "dive": when the beat is really about a call whose body is where the interesting part happens, follow it: give the definition's file and line range and a storyboard of 2–5 beats for a small sub-tour through it.
+Decide which helps understanding more. Prefer unfold for the first level unless the beat is just a call. Read the code to be sure of line numbers; tokens must be exact text on their line.
+
+Call report_zoom exactly once, then reply with one short sentence.`;
+
+/** Asks for the next zoom level of `beat` (shown in `frame`); `history` holds the levels seen so far. */
+export async function zoom(cwd, modelId, { flow, stop, frame, beat, history }, validate, emit) {
+  let result = null;
+  zoomSinks.set(cwd, (report) => (result = validate(report)));
+  const session = await tourSession(cwd, modelId);
+  const seen = history.length ? history.map((h, i) => `Level ${i + 2}: ${h}`).join('\n') : '(only the sticky note)';
+  const message = [
+    `## Flow: ${flow.title}`,
+    `## Stop: ${stop.title} — ${stop.file}:${stop.startLine}-${stop.endLine}`,
+    frame.title ? `## Inside the sub-tour: ${frame.title} — ${frame.file}:${frame.startLine}-${frame.endLine}` : '',
+    `## Beat\n\nLines ${beat.lines.join('–')} of ${frame.file}${beat.token ? `, marking \`${beat.token}\`` : ''}.\nSticky note: ${beat.note}`,
+    `## What the reviewer has seen of this beat so far\n\n${seen}`,
+    `## Task\n\n${ZOOM}`,
+  ].filter(Boolean).join('\n\n');
+  try {
+    await run(session, message, emit);
+  } finally {
+    zoomSinks.delete(cwd);
+  }
+  if (!result) throw new Error('No deeper level for this beat.');
+  return result;
 }

@@ -105,6 +105,26 @@
       font: 700 12px/20px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; vertical-align: 2px; }
     .note.wide { width: 300px; }
     .note .muted { opacity: .65; font-size: 14px; }
+    .note .actions { display: flex; gap: 6px; margin-top: 8px; opacity: 0; transition: opacity .15s; }
+    .note:hover .actions, .note.current .actions, .note.has-thread .actions { opacity: 1; }
+    .note .actions button { all: unset; cursor: pointer; padding: 2px 8px; border-radius: 999px; background: rgba(59,50,0,.08);
+      font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #3b3200; }
+    .note .actions button:hover { background: rgba(59,50,0,.16); }
+    .note .actions .level { font: 11px -apple-system, sans-serif; opacity: .6; align-self: center; margin-left: auto; }
+    .note.unfolded { width: 330px; background: #fff3a0; }
+    .note.dim, .badge.dim { opacity: .35 !important; }
+    .note.dim:hover { opacity: .9 !important; }
+    .thread { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+    .thread .q { font: 600 12px/1.35 -apple-system, BlinkMacSystemFont, sans-serif; color: #3b3200; }
+    .thread .a { font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #0b3d6b; background: #ddf4ff;
+      border-radius: 6px; padding: 6px 8px; max-height: 180px; overflow: auto; white-space: pre-wrap; }
+    .thread .a code { font: 11px ui-monospace, monospace; background: rgba(9,105,218,.1); }
+    .thread .a.pending::after { content: "▍"; animation: blink 1s steps(2) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    .thread .err { font: 12px -apple-system, sans-serif; color: #cf222e; }
+    .thread textarea { all: unset; box-sizing: border-box; width: 100%; min-height: 34px; padding: 6px 8px; border-radius: 6px; background: #fff;
+      border: 1px solid rgba(59,50,0,.25); font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; color: #1f2328; white-space: pre-wrap; }
+    .thread .hint { font: 11px -apple-system, sans-serif; opacity: .6; }
     .badge { position: absolute; width: 18px; height: 18px; border-radius: 50%; background: var(--c); color: #fff; transition: opacity .3s;
       font: 700 11px/18px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
     .badge.enter { opacity: 0; }
@@ -149,7 +169,7 @@
     .context[hidden] { display: none; }
   `;
 
-  function create({ onPrev, onNext, onPrevStop, onNextStop, onReplay, onClose }) {
+  function create({ onPrev, onNext, onPrevStop, onNextStop, onReplay, onClose, onBeatAction, onThreadDraft, onThreadSend }) {
     // Drawing layer: below GitHub's sticky file header (z-index 5) and page header (11).
     const host = document.createElement('div');
     host.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;z-index:4;pointer-events:none';
@@ -199,12 +219,13 @@
     let padded = null; // [element, previous padding]
     let observers = [];
 
-    function path(parent, d, { color, width = 2.2, animate, delay = 0, dur = 0.5 }) {
+    function path(parent, d, { color, width = 2.2, animate, delay = 0, dur = 0.5, opacity = 1 }) {
       const p = document.createElementNS(NS, 'path');
       p.setAttribute('d', d);
       p.setAttribute('class', `ink${animate ? ' draw' : ''}`);
       p.setAttribute('stroke', color);
       p.setAttribute('stroke-width', width);
+      if (opacity < 1) p.setAttribute('opacity', opacity);
       parent.appendChild(p);
       if (animate) {
         p.style.setProperty('--len', Math.ceil(p.getTotalLength()) + 2);
@@ -272,11 +293,62 @@
       return true;
     }
 
+    // Under a note: the actions (ask, zoom) and the beat's question thread.
+    const md = (t) => noteHtml(t).replace(/\n/g, '<br>');
+    function noteExtras(beat) {
+      if (beat.actions === false) return '';
+      const level = beat.level > 1 ? `<span class="level">detail ${beat.level}${beat.maxed ? ' (max)' : ''}</span>` : '';
+      let html = `<div class="actions"><button data-act="ask" title="Ask about this (?)">💬 Ask</button>` +
+        `${beat.maxed ? '' : '<button data-act="deeper" title="More detail (↓)">🔍 Deeper</button>'}` +
+        `${beat.level > 1 || beat.canUp ? '<button data-act="up" title="Less detail (↑)">↑</button>' : ''}${level}</div>`;
+      const thread = beat.thread;
+      if (thread?.messages?.length || thread?.open) {
+        html += '<div class="thread">';
+        for (const m of thread.messages || []) {
+          html += `<div class="q">${escapeHtml(m.q)}</div>`;
+          if (m.error) html += `<div class="err">${escapeHtml(m.error)}</div>`;
+          else html += `<div class="a${m.pending ? ' pending' : ''}">${md(m.a || '')}</div>`;
+        }
+        if (thread.open) html += `<textarea rows="1" placeholder="Ask about this…">${escapeHtml(thread.draft || '')}</textarea><div class="hint">Enter to send · the whole conversation is in the Lesehilfe panel</div>`;
+        html += '</div>';
+      }
+      return html;
+    }
+    function wireNote(note, i) {
+      note.addEventListener('click', (e) => {
+        const act = e.target.closest('[data-act]')?.dataset.act;
+        if (act) {
+          e.stopPropagation();
+          onBeatAction?.(i, act);
+        }
+      });
+      const input = note.querySelector('textarea');
+      if (input) {
+        input.addEventListener('input', () => onThreadDraft?.(i, input.value));
+        input.addEventListener('keydown', (e) => {
+          e.stopPropagation(); // typing doesn't drive the tour
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (input.value.trim()) onThreadSend?.(i, input.value.trim());
+          } else if (e.key === 'Escape') {
+            onBeatAction?.(i, 'close-thread');
+          }
+        });
+        if (focusInput === i) requestAnimationFrame(() => {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        });
+      }
+    }
+    let focusInput = null; // beat whose question box should keep the focus across redraws
+
     // Draws one beat; returns the document y range to keep in view while it plays.
     function drawBeat(i, animate) {
       const beat = stop.beats[i];
       const { table, t, lane } = geo;
       const color = TONES[beat.tone] || TONES.neutral;
+      const opacity = beat.dim ? 0.3 : 1;
+      const label = beat.label || String(i + 1);
       const [firstLine, lastLine] = beat.lines;
       const cellA = rowCell(table, firstLine);
       const cellB = rowCell(table, lastLine) || cellA;
@@ -292,7 +364,7 @@
       let anchor = null;
       if (beat.shape === 'bracket') {
         const x = t.right - 14;
-        path(svgInk, roughLine(x - 10, a.top + 3, x, a.top + 3, 0.8) + roughLine(x, a.top + 3, x, b.bottom - 3, 1.2) + roughLine(x, b.bottom - 3, x - 10, b.bottom - 3, 0.8), { color, animate });
+        path(svgInk, roughLine(x - 10, a.top + 3, x, a.top + 3, 0.8) + roughLine(x, a.top + 3, x, b.bottom - 3, 1.2) + roughLine(x, b.bottom - 3, x - 10, b.bottom - 3, 0.8), { color, animate, opacity });
         anchor = { x: x + 6, y: (a.top + b.bottom) / 2 };
       } else {
         let r = beat.token && code ? tokenRect(code, beat.token) : null;
@@ -303,9 +375,9 @@
           r.height = r.bottom - r.top;
         }
         if (r) {
-          if (beat.shape === 'circle') path(svgInk, roughEllipse((r.left + r.right) / 2, (r.top + r.bottom) / 2, r.width / 2 + 12, r.height / 2 + 7), { color, animate });
-          else if (beat.shape === 'box') path(svgInk, roughBox(r.left - 7, r.top - 4, r.right + 7, r.bottom + 4), { color, animate });
-          else path(svgInk, roughLine(r.left - 4, r.bottom + 2, r.right + 6, r.bottom + 1, 1.2), { color, width: 2.6, animate });
+          if (beat.shape === 'circle') path(svgInk, roughEllipse((r.left + r.right) / 2, (r.top + r.bottom) / 2, r.width / 2 + 12, r.height / 2 + 7), { color, animate, opacity });
+          else if (beat.shape === 'box') path(svgInk, roughBox(r.left - 7, r.top - 4, r.right + 7, r.bottom + 4), { color, animate, opacity });
+          else path(svgInk, roughLine(r.left - 4, r.bottom + 2, r.right + 6, r.bottom + 1, 1.2), { color, width: 2.6, animate, opacity });
         }
         // A connector may only run through the empty space after the line's text.
         const end = rects.reduce((m, q) => (!m || q.bottom > m.bottom + 1 || (Math.abs(q.bottom - m.bottom) <= 1 && q.right > m.right) ? q : m), null);
@@ -314,13 +386,16 @@
 
       // Numbered badge on the edge between line numbers and code (covers no text).
       const cellLeft = docRect(cellA.getBoundingClientRect()).left;
-      const badge = element('badge', String(i + 1), animate, 250);
+      const badge = element(`badge${beat.dim ? ' dim' : ''}`, escapeHtml(label), animate, 250);
       badge.style.setProperty('--c', color);
       badge.style.left = `${cellLeft - 9}px`;
       badge.style.top = `${a.top + Math.min(a.height, 24) / 2 - 9}px`;
 
       // Sticky note in the margin, as close to its line as the notes above allow.
-      const note = element(`note${beat.wide ? ' wide' : ''}`, `<span class="num">${i + 1}</span>${noteHtml(beat.note)}${beat.extra || ''}`, animate, 300);
+      const classes = ['note', beat.wide && 'wide', beat.unfolded && 'unfolded', beat.dim && 'dim', beat.current && 'current', beat.thread?.messages?.length && 'has-thread'];
+      const note = element(classes.filter(Boolean).join(' '), `<span class="num">${escapeHtml(label)}</span>${noteHtml(beat.note)}${beat.extra || ''}${noteExtras(beat)}`, animate, 300);
+      note.dataset.beat = i;
+      wireNote(note, i);
       note.style.setProperty('--c', color);
       note.style.setProperty('--rot', `${j(1.6).toFixed(2)}deg`);
       note.style.left = `${t.right + 34}px`;
@@ -334,7 +409,7 @@
         g.setAttribute('class', 'conn');
         svgInk.appendChild(g);
         const d = roughLine(t.right + 32, y0, lane, y0, 0.7) + (Math.abs(y0 - anchor.y) > 3 ? roughLine(lane, y0, lane, anchor.y, 0.9) : '') + roughLine(lane, anchor.y, anchor.x, anchor.y, 0.7);
-        path(g, d, { color, width: 1.8, animate, delay: 0.45, dur: 0.45 });
+        path(g, d, { color, width: 1.8, animate, delay: 0.45, dur: 0.45, opacity });
         path(g, roughLine(anchor.x, anchor.y, anchor.x + 9, anchor.y - 5, 0.4) + roughLine(anchor.x, anchor.y, anchor.x + 9, anchor.y + 5, 0.4), { color, width: 1.8, animate, delay: 0.85, dur: 0.15 });
         note.addEventListener('mouseenter', () => g.classList.add('hover'));
         note.addEventListener('mouseleave', () => g.classList.remove('hover'));
@@ -510,6 +585,25 @@
       },
       /** Shows `n` beats of the current stop (animating if it's the next one). */
       reveal: (n, options) => reveal(n, options),
+      /** Replaces the stop's beats (e.g. a beat unfolded, a thread changed) and redraws in place. */
+      update(beats, n = drawnTarget) {
+        if (!stop) return;
+        stop = { ...stop, beats };
+        drawnTarget = Math.min(n, beats.length);
+        redraw();
+      },
+      focusThread(i) {
+        focusInput = i;
+      },
+      /** Streams an answer into a note without a full redraw. */
+      setAnswer(i, index, text, pending) {
+        const a = root.querySelector(`.note[data-beat="${i}"] .thread`)?.querySelectorAll('.a')[index];
+        if (!a) return false;
+        a.innerHTML = md(text);
+        a.classList.toggle('pending', pending);
+        a.scrollTop = a.scrollHeight;
+        return true;
+      },
       destroy() {
         playToken++;
         removeEventListener('scroll', clipToHeaders);
