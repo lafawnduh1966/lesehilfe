@@ -35,3 +35,30 @@
 .lesehilfe-tour td:first-child {
   box-shadow: inset 3px 0 0 #0969da;
 }
+
+/* Tour route in GitHub's file tree */
+.lesehilfe-tree-stop {
+  position: relative;
+}
+.lesehilfe-tree-badge {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #ddf4ff;
+  color: #0969da;
+  font: 600 10px/16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  word-spacing: 3px;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px var(--bgColor-default, #fff);
+}
+.lesehilfe-tree-current {
+  background: rgba(84, 174, 255, 0.18) !important;
+  border-radius: 6px;
+}
+.lesehilfe-tree-current .lesehilfe-tree-badge {
+  background: #0969da;
+  color: #fff;
+}

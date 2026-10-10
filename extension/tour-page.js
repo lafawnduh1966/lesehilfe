@@ -79,6 +79,55 @@
     return tableFor(stop.file) ? 'not-in-diff' : 'missing';
   }
 
+  // --- The tour's route in GitHub's file tree ------------------------------------------------
+  // Every file with stops gets their numbers; the current file is highlighted and kept in view
+  // in the tree. GitHub re-renders the tree, so the marks are re-applied after DOM changes.
+
+  // The visible row of a file's tree item (the <li> also wraps nothing else for files).
+  const treeRow = (file) => {
+    const li = document.getElementById(file);
+    return li?.getAttribute('role') === 'treeitem' ? li.querySelector(':scope > [class*="TreeView-item-container"]') : null;
+  };
+
+  function markTree() {
+    document.querySelectorAll('.lesehilfe-tree-badge').forEach((badge) => badge.remove());
+    document.querySelectorAll('.lesehilfe-tree-stop, .lesehilfe-tree-current').forEach((row) => row.classList.remove('lesehilfe-tree-stop', 'lesehilfe-tree-current'));
+    if (!tour || !overlay) return;
+    const stopsByFile = new Map();
+    tour.stops.forEach((stop, i) => stopsByFile.set(stop.file, [...(stopsByFile.get(stop.file) || []), i + 1]));
+    // A real element rather than ::after: GitHub uses the pseudo-elements for its own current-file bar.
+    for (const [file, numbers] of stopsByFile) {
+      const row = treeRow(file);
+      if (!row) continue;
+      row.classList.add('lesehilfe-tree-stop');
+      const badge = document.createElement('span');
+      badge.className = 'lesehilfe-tree-badge';
+      badge.textContent = numbers.join(' ');
+      row.appendChild(badge);
+    }
+    const current = treeRow(tour.stops[tour.index].file);
+    if (!current) return;
+    current.classList.add('lesehilfe-tree-current');
+    // Scroll only the tree's own pane (scrollIntoView would also move the page).
+    let pane = current.parentElement;
+    while (pane && !(/(auto|scroll)/.test(getComputedStyle(pane).overflowY) && pane.scrollHeight > pane.clientHeight)) pane = pane.parentElement;
+    if (pane) {
+      const item = current.getBoundingClientRect();
+      const box = pane.getBoundingClientRect();
+      if (item.top < box.top + 40 || item.bottom > box.bottom - 40) pane.scrollTop += item.top - box.top - box.height / 3;
+    }
+  }
+
+  let treeTimer;
+  new MutationObserver(() => {
+    if (!tour || !overlay) return;
+    clearTimeout(treeTimer);
+    treeTimer = setTimeout(() => {
+      const current = tour && treeRow(tour.stops[tour.index].file);
+      if (current && !(current.classList.contains('lesehilfe-tree-current') && current.querySelector('.lesehilfe-tree-badge'))) markTree();
+    }, 300);
+  }).observe(document.documentElement, { childList: true, subtree: true });
+
   // --- What a stop shows ----------------------------------------------------------------------
 
   const storyboard = (i) => {
@@ -169,6 +218,7 @@
     notify({ prKey: tour.prKey, index, total: tour.stops.length });
     ensureOverlay();
     updateRemote();
+    markTree();
     shownKey = `${index}:card:${storyboard(index) ? 'sb' : 'fallback'}`;
     overlay.showCard(transitionCard(index), { transition: true });
   }
@@ -187,6 +237,7 @@
     notify({ prKey: tour.prKey, index, total: tour.stops.length });
     ensureOverlay();
     updateRemote();
+    markTree();
     const stop = tour.stops[index];
     overlay.showCard('');
     if (!(await openFile(stop.file))) return; // page is navigating
@@ -261,6 +312,7 @@
   function end() {
     overlay?.destroy();
     overlay = null;
+    markTree(); // clears the marks
     const prKey = tour?.prKey ?? currentPR();
     tour = null;
     shownKey = null;
@@ -336,6 +388,7 @@
       overlay.destroy();
       overlay = null;
       shownKey = null;
+      markTree();
     }
   }, 1000);
 })();
