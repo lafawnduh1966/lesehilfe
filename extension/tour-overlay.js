@@ -332,13 +332,19 @@
             onBeatAction?.(i, 'close-thread');
           }
         });
-        if (focusInput === i) requestAnimationFrame(() => {
-          input.focus();
-          input.setSelectionRange(input.value.length, input.value.length);
-        });
+        // Focus only right after "Ask" was clicked, or to keep it while the user is typing
+        // during a redraw — never as a side effect of other actions, and without scrolling.
+        if (focusInput === i || keepFocus === i) {
+          focusInput = null;
+          requestAnimationFrame(() => {
+            input.focus({ preventScroll: true });
+            input.setSelectionRange(input.value.length, input.value.length);
+          });
+        }
       }
     }
-    let focusInput = null; // beat whose question box should keep the focus across redraws
+    let focusInput = null; // beat whose question box gets the focus once (after "Ask")
+    let keepFocus = null; // beat whose question box had the focus when a redraw started
 
     // Draws one beat; returns the document y range to keep in view while it plays.
     function drawBeat(i, animate) {
@@ -442,6 +448,8 @@
     // Redraw the revealed beats without animation (after layout changes or when stepping back).
     let drawnTarget = 0; // beats revealed in the current stop
     function redraw() {
+      const typing = root.activeElement?.tagName === 'TEXTAREA' ? root.activeElement.closest('.note')?.dataset.beat : null;
+      keepFocus = typing == null ? null : Number(typing);
       if (!stop || !clear()) return;
       for (let i = 0; i < drawnTarget; i++) drawBeat(i, false);
     }
@@ -583,6 +591,11 @@
       },
       focusThread(i) {
         focusInput = i;
+      },
+      /** Brings a beat's code into view (after zooming into it). */
+      showBeat(i) {
+        const range = stop && i >= 0 && i < stop.beats.length ? beatRange(i) : null;
+        if (range) ensureVisible(range);
       },
       /** Streams an answer into a note without a full redraw. */
       setAnswer(i, index, text, pending) {

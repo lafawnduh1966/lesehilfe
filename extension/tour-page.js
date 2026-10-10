@@ -315,6 +315,7 @@
     report();
     updateRemote();
     renderFrame();
+    overlay.showBeat(lastView.findIndex((v) => v.orig === i && v.unfolded));
   }
 
   // ↑ : one level less detail; out of a dive back to where it started.
