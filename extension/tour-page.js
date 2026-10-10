@@ -1,7 +1,9 @@
 // Runs a guided tour through a user flow on the GitHub PR page: moves between files via
 // GitHub's single-file mode, draws each stop with LesehilfeOverlay, and keeps the tour in
 // storage so it survives page reloads. The side panel starts it and streams storyboards in.
-// Content script.
+//
+// Between stops a transition card says where the flow goes next and why; a stop starts with
+// where control arrives and ends by marking where it leaves. Content script.
 (() => {
   const PR_PATH = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
   const STORAGE_KEY = 'pageTour';
@@ -11,10 +13,23 @@
   const RESUME_FLAG = 'lesehilfe-tour-resume';
   const { create, tableFor, rowCell } = globalThis.LesehilfeOverlay;
   // Stop texts come from the agent, which reads untrusted PR content: never insert them as HTML.
-  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const base = (file) => file.split('/').pop();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // { prKey, owner, repo, number, sha, flowIndex, flowTitle, stops, storyboards: { [i]: beats },
-  //   index (current stop), beat (beats revealed in it), seen: { [i]: true } }
+  const KINDS = {
+    start: ['▶', 'Where it starts'],
+    calls: ['⤵', 'Calls into'],
+    transaction: ['⛓', 'On-chain transaction'],
+    later: ['⏭', 'Later, separately'],
+    event: ['📡', 'Reacts to an event'],
+    returns: ['↩', 'Returns to'],
+  };
+
+  // { prKey, owner, repo, number, sha, flowIndex, flowTitle, flowSummary, stops,
+  //   storyboards: { [i]: { beats, arrival, fileRole, inFunction } },
+  //   index (current stop), phase ('card' before entering a stop | 'stop'),
+  //   beat (beats revealed), seen: { [i]: true }, lastFile }
   let tour = null;
   let overlay = null;
   let shownKey = null; // which stop (and storyboard version) is currently drawn
@@ -45,47 +60,88 @@
     const single = new URLSearchParams(location.search).get('mode') === 'single';
     if (onChanges && single) {
       if (location.hash !== hash) location.hash = hash;
-    } else {
-      // Full navigation: the tour resumes from storage after the reload.
-      sessionStorage.setItem(RESUME_FLAG, tour.prKey);
-      location.assign(`/${tour.owner}/${tour.repo}/pull/${tour.number}/changes?mode=single${hash}`);
-      return false;
+      return true;
     }
-    return true;
+    // Full navigation: the tour resumes from storage after the reload.
+    sessionStorage.setItem(RESUME_FLAG, tour.prKey);
+    location.assign(`/${tour.owner}/${tour.repo}/pull/${tour.number}/changes?mode=single${hash}`);
+    return false;
   }
 
   async function waitForLines(stop, timeoutMs = 15000) {
-    const until = Date.now() + timeoutMs;
-    while (Date.now() < until) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
       const table = tableFor(stop.file);
       if (table && rowCell(table, stop.startLine)) return 'ok';
-      if (table && table.querySelectorAll('td.diff-text-cell').length > 0 && Date.now() > until - timeoutMs + 3000) return 'not-in-diff';
-      await new Promise((r) => setTimeout(r, 200));
+      if (table && table.querySelector('td.diff-text-cell') && Date.now() - start > 3000) return 'not-in-diff';
+      await sleep(200);
     }
     return tableFor(stop.file) ? 'not-in-diff' : 'missing';
   }
 
-  // Until the agent's storyboard arrives, the stop is shown with the overview's explanation.
+  // --- What a stop shows ----------------------------------------------------------------------
+
+  const storyboard = (i) => {
+    const sb = tour.storyboards[i];
+    return Array.isArray(sb) ? { beats: sb } : sb || null;
+  };
+
+  /** The stop's beats: where control arrives, the agent's storyboard, then where it leaves. */
   function beatsFor(i) {
     const stop = tour.stops[i];
+    const sb = storyboard(i);
+    if (!sb) {
+      // Until the storyboard arrives, show the overview's explanation.
+      return [{ lines: [stop.startLine, stop.endLine], shape: 'bracket', tone: 'neutral', note: stop.explanation, wide: true,
+        extra: '<div class="muted">Lesehilfe is sketching this stop…</div>' }];
+    }
+    const beats = [...sb.beats];
+    const arrival = sb.arrival || {};
+    const prev = tour.stops[i - 1];
+    if (arrival.entryLine && !(beats[0]?.lines[0] === arrival.entryLine && beats[0]?.token === arrival.entryToken)) {
+      const from = prev && arrival.fromLine ? ` from \`${base(prev.file)}:${arrival.fromLine}\`` : '';
+      beats.unshift({ lines: [arrival.entryLine], token: arrival.entryToken, shape: arrival.entryToken ? 'circle' : 'underline', tone: 'neutral',
+        note: i === 0 ? `**Start here.** ${arrival.why || ''}`.trim() : `↳ **Arrives here**${from}.` });
+    }
+    const next = tour.stops[i + 1];
+    const out = storyboard(i + 1)?.arrival;
+    if (next && out?.fromLine && out.fromLine >= stop.startLine - 5 && out.fromLine <= stop.endLine + 5) {
+      const where = next.file === stop.file ? 'further down this file' : `in \`${base(next.file)}\``;
+      beats.push({ lines: [out.fromLine], token: out.fromToken, shape: out.fromToken ? 'circle' : 'underline', tone: 'neutral',
+        note: `→ **Next:** ${next.title} — ${where}.` });
+    }
+    return beats;
+  }
+
+  function transitionCard(i) {
+    const stop = tour.stops[i];
+    const sb = storyboard(i);
+    const arrival = sb?.arrival || {};
+    const prev = tour.stops[i - 1];
+    const [icon, label] = KINDS[arrival.kind || (i === 0 ? 'start' : 'calls')] || KINDS.calls;
+    const files = prev && prev.file !== stop.file
+      ? `<span class="file">${esc(base(prev.file))}</span><span class="arrow">→</span><span class="file to">${esc(base(stop.file))}</span>`
+      : `<span class="file to">${esc(base(stop.file))}</span>${prev ? '<span class="arrow">(same file)</span>' : ''}`;
+    const why = arrival.why || (i === 0 ? tour.flowSummary : '') || '';
     return (
-      tour.storyboards[i] || [
-        {
-          lines: [stop.startLine, stop.endLine],
-          shape: 'bracket',
-          tone: 'neutral',
-          note: stop.explanation,
-          wide: true,
-          extra: '<div class="muted">Lesehilfe is sketching this stop…</div>',
-        },
-      ]
+      `<div class="eyebrow">${i === 0 ? esc(tour.flowTitle) : `Next · stop ${i + 1} of ${tour.stops.length}`}</div>` +
+      `<div class="files">${files}</div>` +
+      `<div class="kind">${icon} ${esc(label)}: ${esc(stop.title)}</div>` +
+      (sb?.fileRole ? `<div class="role">${esc(base(stop.file))} — ${esc(sb.fileRole)}</div>` : '') +
+      (why ? `<div class="why">${esc(why)}</div>` : '<div class="why">Lesehilfe is still sketching this part…</div>') +
+      `<div class="hint"><kbd>→</kbd> continue · <kbd>←</kbd> back · <kbd>Esc</kbd> end</div>`
     );
+  }
+
+  function ensureOverlay() {
+    if (overlay) return;
+    overlay = create({ onPrev: back, onNext: forward, onPrevStop: prevStop, onNextStop: nextStop, onReplay: replay, onClose: end });
   }
 
   function updateRemote() {
     const stop = tour.stops[tour.index];
-    const beats = beatsFor(tour.index).length;
-    const pending = tour.stops.filter((_, i) => !tour.storyboards[i]).length;
+    const beats = tour.phase === 'card' ? 0 : beatsFor(tour.index).length;
+    const pending = tour.stops.filter((_, i) => !storyboard(i)).length;
     const last = tour.stops.length - 1;
     overlay.setRemote({
       flowTitle: tour.flowTitle,
@@ -95,87 +151,110 @@
       beat: tour.beat,
       beats,
       status: pending ? `sketching ${tour.stops.length - pending}/${tour.stops.length}` : '',
-      canPrev: tour.index > 0 || tour.beat > 1,
-      canNext: tour.index < last || tour.beat < beats,
+      canPrev: tour.index > 0 || (tour.phase === 'stop' && tour.beat > 1),
+      canNext: true,
       canPrevStop: tour.index > 0,
       canNextStop: tour.index < last,
     });
   }
 
+  // --- Moving through the tour ------------------------------------------------------------
+
+  /** The card before stop `index`: where the flow goes next, and why. */
+  function showTransition(index) {
+    tour.index = index;
+    tour.phase = 'card';
+    tour.beat = 0;
+    save();
+    notify({ prKey: tour.prKey, index, total: tour.stops.length });
+    ensureOverlay();
+    updateRemote();
+    shownKey = `${index}:card:${storyboard(index) ? 'sb' : 'fallback'}`;
+    overlay.showCard(transitionCard(index), { transition: true });
+  }
+
   /**
-   * Shows stop `index`. A new stop starts with its first beat, animated; a stop seen before
-   * (or reached by stepping back) shows all its beats at once.
+   * Shows stop `index`. A new stop starts with its first beat, animated, after a look at the
+   * top of its file when the file changed; a stop seen before (or reached by stepping back)
+   * shows all its beats at once.
    */
   async function show(index, { all = false } = {}) {
     const seenBefore = Boolean(tour.seen?.[index]) || all;
     tour.index = index;
+    tour.phase = 'stop';
     tour.beat = seenBefore ? beatsFor(index).length : 1;
     save();
     notify({ prKey: tour.prKey, index, total: tour.stops.length });
-    if (!overlay) {
-      overlay = create({
-        onPrev: back, onNext: forward, onPrevStop: prevStop, onNextStop: nextStop,
-        onReplay: replay, onClose: end,
-      });
-    }
+    ensureOverlay();
     updateRemote();
     const stop = tour.stops[index];
     overlay.showCard('');
     if (!(await openFile(stop.file))) return; // page is navigating
     const status = await waitForLines(stop);
-    if (tour?.index !== index) return;
+    if (tour?.index !== index || tour.phase !== 'stop') return;
     if (status !== 'ok') {
       const url = `https://github.com/${tour.owner}/${tour.repo}/blob/${tour.sha}/${stop.file.split('/').map(encodeURIComponent).join('/')}#L${stop.startLine}-L${stop.endLine}`;
       shownKey = null;
       overlay.showCard(
         `<b>${esc(stop.title)}</b><br>${esc(stop.explanation)}<br><br>` +
-          `This code (<code>${esc(stop.file.split('/').pop())}:${stop.startLine}</code>) isn't part of the visible diff. ` +
+          `This code (<code>${esc(base(stop.file))}:${stop.startLine}</code>) isn't part of the visible diff. ` +
           `<a href="${esc(url)}" target="_blank" rel="noopener">Open it on GitHub ↗</a>`
       );
       return;
     }
-    const hasStoryboard = Boolean(tour.storyboards[index]);
-    shownKey = `${index}:${hasStoryboard ? 'sb' : 'fallback'}`;
-    if (hasStoryboard) {
-      tour.seen = { ...tour.seen, [index]: true };
-      save();
+
+    // Establishing shot: arriving in a new file, look at its top before gliding down to the stop.
+    if (!seenBefore && tour.lastFile !== stop.file) {
+      const table = tableFor(stop.file);
+      window.scrollTo({ top: Math.max(0, table.getBoundingClientRect().top + scrollY - 140), behavior: 'instant' });
+      await sleep(700);
+      if (tour?.index !== index || tour.phase !== 'stop') return;
     }
+    tour.lastFile = stop.file;
+
+    const sb = storyboard(index);
+    shownKey = `${index}:${sb ? 'sb' : 'fallback'}`;
+    if (sb) tour.seen = { ...tour.seen, [index]: true };
+    save();
     await overlay.showStop(
       { file: stop.file, startLine: stop.startLine, endLine: stop.endLine, beats: beatsFor(index) },
       { reveal: tour.beat, animate: !seenBefore }
     );
+    if (tour?.index === index) overlay.setContext(`${base(stop.file)}${sb?.inFunction ? ` › ${sb.inFunction}()` : ''}`);
   }
 
-  // → : next beat, or the next stop after the last beat. ← : back a beat, or the previous stop.
+  // → : continue past a card, reveal the next beat, or go to the next stop's card.
   function forward() {
     if (!tour || !overlay) return;
+    if (tour.phase === 'card') return show(tour.index);
     if (tour.beat < beatsFor(tour.index).length) {
       tour.beat++;
       save();
       updateRemote();
-      overlay.reveal(tour.beat, { animate: true });
-    } else {
-      nextStop();
+      return overlay.reveal(tour.beat, { animate: true });
     }
+    if (tour.index < tour.stops.length - 1) return showTransition(tour.index + 1);
+    end();
   }
+  // ← : back a beat, or to the previous stop (fully shown).
   function back() {
     if (!tour || !overlay) return;
-    if (tour.beat > 1) {
+    if (tour.phase === 'stop' && tour.beat > 1) {
       tour.beat--;
       save();
       updateRemote();
-      overlay.reveal(tour.beat);
-    } else if (tour.index > 0) {
-      show(tour.index - 1, { all: true });
+      return overlay.reveal(tour.beat);
     }
+    if (tour.index > 0) return show(tour.index - 1, { all: true });
   }
-  const nextStop = () => tour && tour.index < tour.stops.length - 1 && show(tour.index + 1);
+  const nextStop = () => tour && tour.index < tour.stops.length - 1 && showTransition(tour.index + 1);
   const prevStop = () => tour && tour.index > 0 && show(tour.index - 1, { all: true });
 
   // Replay the current stop from its first beat.
   function replay() {
     if (!tour) return;
     tour.seen = { ...tour.seen, [tour.index]: false };
+    tour.lastFile = null;
     show(tour.index);
   }
 
@@ -195,22 +274,23 @@
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
     if (e.key === 'ArrowRight') (e.shiftKey ? nextStop : forward)();
     else if (e.key === 'ArrowLeft') (e.shiftKey ? prevStop : back)();
-    else if (e.key === 'Escape') end();
-    else return;
+    else end();
     e.preventDefault();
   });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'tourStart') {
-      tour = { ...message.tour, storyboards: message.tour.storyboards || {}, index: 0, beat: 1, seen: {} };
-      show(0);
+      tour = { ...message.tour, storyboards: message.tour.storyboards || {}, index: 0, phase: 'card', beat: 0, seen: {}, lastFile: null };
+      showTransition(0);
       sendResponse({ ok: true });
     } else if (message.type === 'tourStoryboard' && tour && message.flowIndex === tour.flowIndex && message.prKey === tour.prKey) {
-      tour.storyboards[message.index] = message.beats;
+      tour.storyboards[message.index] = message.storyboard;
       save();
-      if (overlay) updateRemote();
-      // Replace the placeholder of the stop on screen with its storyboard.
-      if (message.index === tour.index && shownKey === `${tour.index}:fallback`) show(tour.index);
+      if (!overlay) return;
+      updateRemote();
+      // Replace placeholders on screen: a card waiting for its "why", or a stop's fallback note.
+      if (message.index === tour.index && shownKey === `${tour.index}:card:fallback`) showTransition(tour.index);
+      else if (message.index === tour.index && shownKey === `${tour.index}:fallback`) show(tour.index);
     } else if (message.type === 'tourEnd') {
       end();
     } else if (message.type === 'tourResume') {
@@ -235,18 +315,20 @@
     return saved && saved.prKey === currentPR() ? saved : null;
   }
 
-  async function resumeSaved() {
+  async function resumeSaved({ afterNavigation = false } = {}) {
     const saved = await savedTour();
     if (!saved) return false;
     tour = saved;
-    show(saved.index, { all: true });
+    // After the tour's own navigation, continue where it was headed; otherwise show the stop.
+    if (saved.phase === 'card' && !afterNavigation) showTransition(saved.index);
+    else show(saved.index, { all: !afterNavigation });
     return true;
   }
 
   // Continue only after a reload the tour caused itself.
   const resumeFor = sessionStorage.getItem(RESUME_FLAG);
   sessionStorage.removeItem(RESUME_FLAG);
-  if (resumeFor && resumeFor === currentPR()) resumeSaved();
+  if (resumeFor && resumeFor === currentPR()) resumeSaved({ afterNavigation: true });
 
   // Leaving the PR (GitHub navigates without reloading): put the drawings away, keep the tour.
   setInterval(() => {

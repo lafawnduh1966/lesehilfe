@@ -553,7 +553,7 @@ async function startPageTour(flowIndex) {
   renderOverview();
   const tour = {
     prKey: key, owner: pr.owner, repo: pr.repo, number: pr.number, sha: overview.sha,
-    flowIndex, flowTitle: flow.title, stops: flow.steps,
+    flowIndex, flowTitle: flow.title, flowSummary: flow.summary, stops: flow.steps,
   };
   const started = await chrome.tabs.sendMessage(tab.id, { type: 'tourStart', tour }).catch(() => null);
   if (!started) {
@@ -563,7 +563,7 @@ async function startPageTour(flowIndex) {
   try {
     await helper.call('storyboards', { ...(await prParams()), token: await getToken(), flowIndex }, (event, data) => {
       if (event !== 'storyboard' || pageTour?.prKey !== key || pageTour.flowIndex !== flowIndex) return;
-      pageTour.storyboards[data.index] = data.beats;
+      pageTour.storyboards[data.index] = data.storyboard;
       sendStoryboard(data.index);
       renderOverview();
     });
@@ -575,7 +575,7 @@ async function startPageTour(flowIndex) {
 
 function sendStoryboard(index) {
   const { prKey, flowIndex, storyboards } = pageTour;
-  chrome.tabs.sendMessage(tab.id, { type: 'tourStoryboard', prKey, flowIndex, index, beats: storyboards[index] }).catch(() => {});
+  chrome.tabs.sendMessage(tab.id, { type: 'tourStoryboard', prKey, flowIndex, index, storyboard: storyboards[index] }).catch(() => {});
 }
 
 function endPageTour() {

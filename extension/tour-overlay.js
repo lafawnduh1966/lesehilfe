@@ -131,6 +131,22 @@
     .card { position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); width: 360px; padding: 16px 18px; background: #fff8b8; color: #3b3200;
       font: 17px/1.3 "Noteworthy", "Marker Felt", "Comic Sans MS", cursive; box-shadow: 0 10px 30px rgba(0,0,0,.2); border-radius: 3px; }
     .card a { color: #0b57d0; }
+    .card.transition { width: 440px; padding: 18px 22px 16px; background: #fff; color: #1f2328; border-radius: 12px; border: 1px solid #d1d9e0;
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; box-shadow: 0 16px 40px rgba(0,0,0,.18); animation: pop .25s ease-out; }
+    @keyframes pop { from { opacity: 0; transform: translate(-50%, -46%); } }
+    .transition .eyebrow { font-size: 12px; color: #59636e; margin-bottom: 8px; }
+    .transition .files { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; margin-bottom: 10px; }
+    .transition .file { padding: 2px 8px; border-radius: 6px; background: #f6f8fa; border: 1px solid #d1d9e0; }
+    .transition .file.to { background: #ddf4ff; border-color: #54aeff; }
+    .transition .arrow { color: #59636e; }
+    .transition .kind { display: inline-flex; gap: 6px; align-items: center; font-weight: 600; margin-bottom: 4px; }
+    .transition .why { font: 18px/1.3 "Noteworthy", "Marker Felt", "Comic Sans MS", cursive; color: #3b3200; background: #fff8b8; padding: 8px 12px; border-radius: 3px; margin: 8px 0 12px; }
+    .transition .role { color: #59636e; font-size: 13px; }
+    .transition .hint { font-size: 12px; color: #59636e; text-align: right; }
+    .transition kbd { font: 11px ui-monospace, monospace; padding: 1px 5px; border: 1px solid #d1d9e0; border-bottom-width: 2px; border-radius: 4px; background: #f6f8fa; }
+    .context { position: fixed; padding: 3px 10px; border-radius: 999px; background: #1f2328; color: #fff; opacity: .88;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+    .context[hidden] { display: none; }
   `;
 
   function create({ onPrev, onNext, onPrevStop, onNextStop, onReplay, onClose }) {
@@ -154,7 +170,7 @@
     remoteRoot.innerHTML = `<style>${REMOTE_STYLE}</style><div class="remote"><span class="text"></span>
       <button class="prev-stop" title="Previous stop (Shift+←)">«</button><button class="prev" title="Back (←)">‹</button>
       <button class="next" title="Next (→)">›</button><button class="next-stop" title="Next stop (Shift+→)">»</button>
-      <button class="replay" title="Replay this stop">↻</button><button class="close" title="End tour (Esc)">✕</button></div><div class="card-slot"></div>`;
+      <button class="replay" title="Replay this stop">↻</button><button class="close" title="End tour (Esc)">✕</button></div><div class="card-slot"></div><div class="context" hidden></div>`;
     remoteRoot.querySelector('.prev').onclick = onPrev;
     remoteRoot.querySelector('.next').onclick = onNext;
     remoteRoot.querySelector('.prev-stop').onclick = onPrevStop;
@@ -444,14 +460,27 @@
         remoteRoot.querySelector('.prev-stop').disabled = !canPrevStop;
         remoteRoot.querySelector('.next-stop').disabled = !canNextStop;
       },
-      /** Shows a card instead of drawings (e.g. the stop's code isn't in the diff). */
-      showCard(html) {
+      /** Shows a card instead of drawings: a transition between stops, or a note that the code isn't in the diff. */
+      showCard(html, { transition = false } = {}) {
         stop = null;
         playToken++;
         svgInk.innerHTML = '';
         shades.innerHTML = '';
         notesEl.innerHTML = '';
-        remoteRoot.querySelector('.card-slot').innerHTML = html ? `<div class="card">${html}</div>` : '';
+        remoteRoot.querySelector('.context').hidden = true;
+        remoteRoot.querySelector('.card-slot').innerHTML = html ? `<div class="card${transition ? ' transition' : ''}">${html}</div>` : '';
+      },
+      /** A small label pinned above the code: which file and function the stop is in. */
+      setContext(text) {
+        const pill = remoteRoot.querySelector('.context');
+        const table = stop && tableFor(stop.file);
+        pill.hidden = !text || !table;
+        if (pill.hidden) return;
+        pill.textContent = text;
+        const headers = [...document.querySelectorAll('[class*="diffHeaderWrapper"], [class*="stickyHeader"]')];
+        const top = Math.max(60, ...headers.map((h) => h.getBoundingClientRect().bottom).filter((b) => b < innerHeight / 2));
+        pill.style.top = `${top + 8}px`;
+        pill.style.left = `${table.getBoundingClientRect().left + 70}px`;
       },
       /**
        * Draws a stop with its first `reveal` beats: animated from the first beat for a new

@@ -128,11 +128,24 @@ export function reportStoryboardTool(onReport) {
     description: 'Submit the storyboard for one tour stop. Call once per stop, in order.',
     parameters: Type.Object({
       stop: Type.Number({ description: '1-based stop number' }),
+      arrival: Type.Object({
+        kind: Type.Union(['start', 'calls', 'transaction', 'later', 'event', 'returns'].map((k) => Type.Literal(k)), {
+          description: 'start = first stop; calls = direct function call; transaction = backend submits an on-chain transaction; later = a separate request, actor or moment; event = reacts to an emitted event; returns = back to the caller',
+        }),
+        why: Type.String({ description: 'One sentence: why the flow comes here now (for stop 1: where the actor starts)' }),
+        fromLine: Type.Optional(Type.Number({ description: 'Line in the PREVIOUS stop\'s file where control leaves for this stop (the call, submission, emit…)' })),
+        fromToken: Type.Optional(Type.String({ description: 'Exact text on fromLine, e.g. the called function name' })),
+        entryLine: Type.Optional(Type.Number({ description: 'Line in THIS stop where control arrives (function signature, handler)' })),
+        entryToken: Type.Optional(Type.String({ description: 'Exact text on entryLine, e.g. the function name' })),
+      }),
+      fileRole: Type.String({ description: 'What this stop\'s file is, in at most 10 words' }),
+      inFunction: Type.Optional(Type.String({ description: 'Name of the function the stop is in, e.g. "_settle"' })),
       beats: Type.Array(Beat, { minItems: 1, maxItems: 5 }),
     }),
-    async execute(_id, { stop, beats }) {
-      const kept = onReport(stop - 1, beats);
-      return text(`Saved storyboard for stop ${stop}${kept < beats.length ? ` (${beats.length - kept} beats dropped: lines outside the stop)` : ''}.`);
+    async execute(_id, { stop, ...storyboard }) {
+      const kept = onReport(stop - 1, storyboard);
+      const dropped = storyboard.beats.length - kept;
+      return text(`Saved storyboard for stop ${stop}${dropped > 0 ? ` (${dropped} beats dropped: lines outside the stop)` : ''}.`);
     },
   });
 }

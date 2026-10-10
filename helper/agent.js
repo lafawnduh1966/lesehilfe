@@ -341,6 +341,12 @@ For every stop below, write a storyboard of 2–5 beats, in the order a reader s
 - arrowTo/arrowLabel: when a later check reverts or unwinds an earlier effect within the stop (e.g. a final payment check that undoes the mint), draw that arrow from the check to the effect.
 - Stay within the stop's line range.
 
+For every stop also describe its **arrival**, so the reviewer understands each jump between files:
+- kind: how the flow gets here from the previous stop (stop 1: "start").
+- why: one sentence on why the flow comes here now, e.g. "The backend has checked everything; now it submits the signed settlement on-chain." For stop 1, where and how the actor starts the flow.
+- fromLine/fromToken: the exact place in the previous stop's code where control leaves for this stop (a call, a transaction submission, an emit). entryLine/entryToken: where it arrives here (function signature, handler). Omit what doesn't exist (e.g. a "later" step started by another actor has no call site).
+- fileRole: what this stop's file is, in a few words. inFunction: the function the stop is in.
+
 Call report_storyboard once per stop, in order (stop numbers as listed), then reply with one short sentence.`;
 
 /**
@@ -350,12 +356,12 @@ Call report_storyboard once per stop, in order (stop numbers as listed), then re
 export async function storyboards(cwd, modelId, { flow, stops, only }, validate, onStoryboard, emit) {
   const wanted = only ?? stops.map((_, i) => i);
   const done = new Set();
-  storyboardSinks.set(cwd, (index, beats) => {
+  storyboardSinks.set(cwd, (index, storyboard) => {
     if (!wanted.includes(index) || done.has(index)) return 0;
-    const kept = validate(stops[index], beats);
+    const kept = validate(index, storyboard);
     done.add(index);
     onStoryboard(index, kept);
-    return kept.length;
+    return kept.beats.length;
   });
   const session = await tourSession(cwd, modelId);
   const list = wanted

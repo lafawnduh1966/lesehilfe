@@ -68,36 +68,59 @@ export async function stopDiff(worktree, { file, startLine, endLine }) {
  * around) the stop, and tokens must actually appear on their line; otherwise the beat
  * falls back to marking whole lines rather than pointing at the wrong place.
  */
-export function validateStoryboard(worktree, stop, beats) {
-  const source = fs.readFileSync(checkedFile(worktree, stop.file), 'utf8').split('\n');
-  const lo = Math.max(1, stop.startLine - 5);
-  const hi = Math.min(source.length, stop.endLine + 5);
-  const inStop = (n) => Number.isInteger(n) && n >= lo && n <= hi;
-  const result = [];
-  for (const beat of beats) {
+export function validateStoryboard(worktree, stops, index, storyboard) {
+  const stop = stops[index];
+  const lines = (file) => fs.readFileSync(checkedFile(worktree, file), 'utf8').split('\n');
+  const source = lines(stop.file);
+  const within = (s, src) => {
+    const lo = Math.max(1, s.startLine - 5);
+    const hi = Math.min(src.length, s.endLine + 5);
+    return { lo, hi, ok: (n) => Number.isInteger(n) && n >= lo && n <= hi };
+  };
+  const here = within(stop, source);
+
+  // The agent is often a line or two off: move to the nearest line that has the token.
+  const snap = (line, token, src, range) => {
+    if (!range.ok(line)) return null;
+    if (!token || src[line - 1].includes(token)) return { line, token };
+    const near = [1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6].map((d) => line + d).find((n) => range.ok(n) && src[n - 1]?.includes(token));
+    return near ? { line: near, token } : { line, token: undefined };
+  };
+
+  const beats = [];
+  for (const beat of storyboard.beats || []) {
     let [first, last = first] = beat.lines.map(Math.round);
-    if (!inStop(first) || !inStop(last) || last < first) continue;
+    if (!here.ok(first) || !here.ok(last) || last < first) continue;
     const clean = { ...beat };
-    if (clean.token && !source[first - 1].includes(clean.token)) {
-      // The agent is often a line or two off: move the beat to the nearest line with the token.
-      const near = [1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6].map((d) => first + d).find((n) => inStop(n) && source[n - 1]?.includes(clean.token));
-      if (near) {
-        if (clean.arrowTo != null) clean.arrowTo += near - first;
-        last += near - first;
-        first = near;
-      } else {
-        delete clean.token;
-      }
+    const snapped = snap(first, clean.token, source, here);
+    if (snapped.line !== first) {
+      if (clean.arrowTo != null) clean.arrowTo += snapped.line - first;
+      last += snapped.line - first;
+      first = snapped.line;
     }
-    clean.lines = [first, Math.max(first, Math.min(last, hi))];
+    if (!snapped.token) delete clean.token;
+    clean.lines = [first, Math.max(first, Math.min(last, here.hi))];
     if (!clean.token && clean.shape !== 'bracket') clean.shape = last > first ? 'bracket' : 'underline';
-    if (clean.arrowTo != null && (!inStop(Math.round(clean.arrowTo)) || Math.round(clean.arrowTo) === first)) {
+    if (clean.arrowTo != null && (!here.ok(Math.round(clean.arrowTo)) || Math.round(clean.arrowTo) === first)) {
       delete clean.arrowTo;
       delete clean.arrowLabel;
     }
-    result.push(clean);
+    beats.push(clean);
   }
-  return result;
+
+  // Arrival: where control left the previous stop and where it enters this one.
+  const arrival = { kind: storyboard.arrival?.kind || (index === 0 ? 'start' : 'calls'), why: storyboard.arrival?.why || '' };
+  const prev = stops[index - 1];
+  if (prev && storyboard.arrival?.fromLine != null) {
+    const prevSource = prev.file === stop.file ? source : lines(prev.file);
+    const from = snap(Math.round(storyboard.arrival.fromLine), storyboard.arrival.fromToken, prevSource, within(prev, prevSource));
+    if (from) Object.assign(arrival, { fromLine: from.line, fromToken: from.token });
+  }
+  if (storyboard.arrival?.entryLine != null) {
+    const entry = snap(Math.round(storyboard.arrival.entryLine), storyboard.arrival.entryToken, source, here);
+    if (entry) Object.assign(arrival, { entryLine: entry.line, entryToken: entry.token });
+  }
+  return { beats, arrival, fileRole: storyboard.fileRole || '', inFunction: storyboard.inFunction || '' };
 }
 
 // --- Cached sub-stops ("Go deeper") ------------------------------------------------------

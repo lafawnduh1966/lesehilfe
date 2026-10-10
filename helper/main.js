@@ -96,7 +96,9 @@ const methods = {
     const key = (i) => `sb:${params.flowIndex}:${i}`;
     const missing = [];
     flow.steps.forEach((_, i) => {
-      if (cached[key(i)] && !params.regenerate) emit('storyboard', { index: i, beats: cached[key(i)] });
+      // Storyboards cached before arrivals existed (plain beat arrays) are rewritten.
+      const hit = cached[key(i)];
+      if (hit && !Array.isArray(hit) && !params.regenerate) emit('storyboard', { index: i, storyboard: hit });
       else missing.push(i);
     });
     if (!missing.length) return { missing: [] };
@@ -105,10 +107,10 @@ const methods = {
       path,
       params.model || agent.DEFAULT_MODEL,
       { flow, stops: flow.steps, only: missing },
-      (stop, beats) => tour.validateStoryboard(path, stop, beats),
-      (index, beats) => {
-        tour.saveTourEntry(path, overview.createdAt, key(index), beats);
-        emit('storyboard', { index, beats });
+      (index, storyboard) => tour.validateStoryboard(path, flow.steps, index, storyboard),
+      (index, storyboard) => {
+        tour.saveTourEntry(path, overview.createdAt, key(index), storyboard);
+        emit('storyboard', { index, storyboard });
       },
       (data) => emit('agent', data)
     );
