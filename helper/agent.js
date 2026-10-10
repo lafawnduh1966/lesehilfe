@@ -345,6 +345,8 @@ For every stop also describe its **arrival**, so the reviewer understands each j
 - kind: how the flow gets here from the previous stop (stop 1: "start").
 - why: one sentence on why the flow comes here now, e.g. "The backend has checked everything; now it submits the signed settlement on-chain." For stop 1, where and how the actor starts the flow.
 - fromLine/fromToken: the exact place in the previous stop's code where control leaves for this stop (a call, a transaction submission, an emit). entryLine/entryToken: where it arrives here (function signature, handler). Omit what doesn't exist (e.g. a "later" step started by another actor has no call site).
+- short: the same transition in at most 6 words, for a map of the flow (e.g. "client uploads the signed order", "submits settlement transaction", "calls redeem()").
+- runsIn: where this stop's code runs, in 1–3 words — the place a reader would name: "Investor's client", "Issuer backend", "On-chain", "Background job"… Use the exact same words for stops in the same place.
 - fileRole: what this stop's file is, in a few words. inFunction: the function the stop is in.
 
 Call report_storyboard once per stop, in order (stop numbers as listed), then reply with one short sentence.`;

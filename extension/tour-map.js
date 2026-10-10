@@ -1,26 +1,27 @@
-// The side panel's view of a running tour: a subway-style map of the flow (one row per stop,
-// its dot in the column of its layer, lines showing where the flow changes layer), with the
-// current stop expanded to its "why" and beats.
+// The side panel's view of a running tour: a timeline of the flow. Stops sit on one vertical
+// line; a heading appears whenever the flow moves to another place (client, backend, on-chain…);
+// between stops a short label says how the flow gets there — a solid line for a direct call,
+// dashed for "later" (another request, actor or moment). The current stop is expanded.
 import { renderMarkdown } from './markdown.js';
 
-const LANES = [
-  ['ui', '🖥', 'UI'],
-  ['api', '🔌', 'API'],
-  ['backend', '⚙', 'Backend'],
-  ['contract', '⛓', 'Contracts'],
-  ['infra', '☁', 'Infra'],
-  ['other', '•', 'Other'],
-];
-const KIND_ICONS = { start: '▶', calls: '⤵', transaction: '⛓', later: '⏭', event: '📡', returns: '↩' };
-const KIND_LABELS = { start: 'starts', calls: 'calls', transaction: 'transaction', later: 'later', event: 'event', returns: 'returns' };
-const LANE_W = 24;
-const NODE_Y = 15; // dot position within a row
-const NS = 'http://www.w3.org/2000/svg';
+const KINDS = {
+  start: ['▶', 'starts'],
+  calls: ['⤵', 'calls'],
+  transaction: ['⛓', 'submits a transaction'],
+  later: ['⏭', 'later'],
+  event: ['📡', 'reacts to an event'],
+  returns: ['↩', 'returns'],
+};
+// Transitions that don't happen in the same moment are drawn dashed.
+const DETACHED = new Set(['later', 'event', 'transaction']);
 
-function svg(tag, attrs) {
-  const node = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
-  return node;
+// Before storyboards name the place, guess it from the overview's layer and the path.
+function guessPlace(stop) {
+  if (stop.layer === 'contract' || /\/(foundry|contracts?)\//.test(stop.file)) return 'On-chain';
+  if (stop.layer === 'ui' || /\/client\//.test(stop.file)) return 'Client';
+  if (stop.layer === 'infra') return 'Infrastructure';
+  if (stop.layer === 'api' || stop.layer === 'backend') return 'Backend';
+  return 'Shared code';
 }
 
 /**
@@ -29,62 +30,52 @@ function svg(tag, attrs) {
  */
 export function renderTourMap(root, { el, flow, tour, onGoto, onEnd }) {
   const stops = flow.steps;
-  const used = LANES.filter(([id]) => stops.some((s) => (s.layer || 'other') === id || (id === 'other' && !LANES.some(([l]) => l === s.layer))));
-  const laneOf = (stop) => Math.max(0, used.findIndex(([id]) => id === (LANES.some(([l]) => l === stop.layer) ? stop.layer : 'other')));
-  const laneX = (i) => 10 + i * LANE_W;
-  const width = laneX(used.length - 1) + 12;
+  const sb = (i) => {
+    const s = tour.storyboards?.[i];
+    return s && !Array.isArray(s) ? s : null;
+  };
+  const place = (i) => sb(i)?.runsIn || guessPlace(stops[i]);
+  const reached = (i) => i <= tour.index || Boolean(tour.seen?.[i]);
 
   const end = el('button', { type: 'button', className: 'link', textContent: 'End tour' });
   end.addEventListener('click', onEnd);
   root.append(
     el('div', { className: 'map-head' },
-      el('div', { className: 'grow' }, el('div', { className: 'map-title', textContent: flow.title }), el('div', { className: 'muted small', textContent: `${flow.actor} · ${stops.length} stops · ← → on the page` })),
-      end),
-    el('div', { className: 'lane-row' },
-      el('div', { className: 'lane-head', style: `width:${width}px` },
-        ...used.map(([, icon, label], i) => el('span', { className: 'lane-icon', title: label, textContent: icon, style: `left:${laneX(i) - 9}px` }))),
-      el('div', { className: 'muted small lane-legend', textContent: used.map(([, icon, label]) => `${icon} ${label}`).join(' · ') }))
+      el('div', { className: 'grow' },
+        el('div', { className: 'map-title', textContent: flow.title }),
+        el('div', { className: 'muted small', textContent: `${flow.actor} · ${stops.length} stops · ← → on the page` })),
+      end)
   );
 
-  const list = el('div', { className: 'map' });
+  const timeline = el('div', { className: 'timeline' });
   stops.forEach((stop, i) => {
-    const current = i === tour.index;
-    const seen = Boolean(tour.seen?.[i]) || i < tour.index;
-    const sb = tour.storyboards?.[i];
-    const arrival = sb && !Array.isArray(sb) ? sb.arrival : null;
-    const kind = arrival?.kind || (i === 0 ? 'start' : null);
-    const lane = laneOf(stop);
+    const arrival = sb(i)?.arrival;
+    const kind = arrival?.kind || (i === 0 ? 'start' : 'calls');
+    const [icon, kindLabel] = KINDS[kind] || KINDS.calls;
+    const newPlace = i === 0 || place(i) !== place(i - 1);
 
-    // Track: line in from the previous stop's lane, the dot, and a line down to the next row.
-    const track = svg('svg', { class: 'track', width, height: '100%' });
-    track.style.height = '100%';
+    // How the flow gets here (between the previous stop and this one), then the place heading.
     if (i > 0) {
-      const from = laneX(laneOf(stops[i - 1]));
-      const to = laneX(lane);
-      track.append(svg('path', { d: `M${from},0 C${from},${NODE_Y * 0.7} ${to},${NODE_Y * 0.3} ${to},${NODE_Y}`, class: `line${seen || current ? ' done' : ''}` }));
+      const text = arrival?.short || (kind === 'calls' && arrival?.entryToken ? `calls ${arrival.entryToken}()` : kindLabel);
+      timeline.append(
+        el('div', { className: `tl-link${DETACHED.has(kind) ? ' detached' : ''}${reached(i) ? ' done' : ''}` },
+          el('span', { className: 'tl-link-text' }, el('span', { className: 'tl-kind', textContent: icon }), document.createTextNode(text)))
+      );
     }
-    if (i < stops.length - 1) {
-      track.append(svg('line', { x1: laneX(lane), y1: NODE_Y, x2: laneX(lane), y2: 2000, class: `line${seen ? ' done' : ''}` }));
+    if (newPlace) {
+      timeline.append(el('div', { className: `tl-place${reached(i) ? ' done' : ''}${i === 0 ? ' first' : ''}`, textContent: place(i) }));
     }
-    track.append(svg('circle', { cx: laneX(lane), cy: NODE_Y, r: current ? 8 : 6, class: `dot${current ? ' current' : seen ? ' seen' : ''}` }));
-    const num = svg('text', { x: laneX(lane), y: NODE_Y + 3.5, class: `num${current || seen ? ' on' : ''}` });
-    num.textContent = String(i + 1);
-    track.append(num);
 
-    const label = el('div', { className: 'stop-label' },
-      el('div', { className: 'stop-name' }, kind ? el('span', { className: 'kind', title: KIND_LABELS[kind], textContent: KIND_ICONS[kind] }) : null, document.createTextNode(stop.title)),
-      el('div', { className: 'muted small mono', textContent: `${stop.file.split('/').pop()}${sb?.inFunction ? ` › ${sb.inFunction}()` : ''}` }));
-
-    const row = el('div', { className: `map-row${current ? ' current' : ''}` }, el('div', { className: 'track-cell', style: `width:${width}px` }, track), label);
-    if (!current) {
-      row.addEventListener('click', () => onGoto(i));
-      row.title = 'Go to this stop';
-    }
+    const current = i === tour.index;
+    const fileLine = `${stop.file.split('/').pop()}${sb(i)?.inFunction ? ` › ${sb(i).inFunction}()` : ''}`;
+    const ends = `${i === 0 ? ' first' : ''}${i === stops.length - 1 ? ' last' : ''}`;
+    const row = el('div', { className: `tl-stop${ends}${current ? ' current' : ''}${reached(i) && !current ? ' seen' : ''}` },
+      el('span', { className: 'tl-dot', textContent: String(i + 1) }),
+      el('div', { className: 'tl-title', textContent: stop.title }));
 
     if (current) {
-      if (arrival?.why) {
-        label.append(el('div', { className: 'why', textContent: arrival.why }));
-      }
+      row.append(el('div', { className: 'muted small mono', textContent: fileLine }));
+      if (arrival?.why) row.append(el('div', { className: 'why', textContent: arrival.why }));
       if (tour.phase === 'stop' && tour.notes?.length) {
         const beats = el('ol', { className: 'beats' });
         tour.notes.forEach((b, n) => {
@@ -99,12 +90,15 @@ export function renderTourMap(root, { el, flow, tour, onGoto, onEnd }) {
           }
           beats.append(item);
         });
-        label.append(beats);
+        row.append(beats);
       } else if (tour.phase === 'card') {
-        label.append(el('div', { className: 'muted small', textContent: 'On the page: the transition card. Press → to enter the stop.' }));
+        row.append(el('div', { className: 'muted small', textContent: 'On the page: where the flow goes next. Press → to enter the stop.' }));
       }
+    } else {
+      row.title = `${fileLine} — go to this stop`;
+      row.addEventListener('click', () => onGoto(i));
     }
-    list.append(row);
+    timeline.append(row);
   });
-  root.append(list);
+  root.append(timeline);
 }

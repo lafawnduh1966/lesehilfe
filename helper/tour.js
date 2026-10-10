@@ -109,7 +109,11 @@ export function validateStoryboard(worktree, stops, index, storyboard) {
   }
 
   // Arrival: where control left the previous stop and where it enters this one.
-  const arrival = { kind: storyboard.arrival?.kind || (index === 0 ? 'start' : 'calls'), why: storyboard.arrival?.why || '' };
+  const arrival = {
+    kind: storyboard.arrival?.kind || (index === 0 ? 'start' : 'calls'),
+    why: storyboard.arrival?.why || '',
+    short: (storyboard.arrival?.short || '').split(/\s+/).slice(0, 8).join(' '),
+  };
   const prev = stops[index - 1];
   if (prev && storyboard.arrival?.fromLine != null) {
     const prevSource = prev.file === stop.file ? source : lines(prev.file);
@@ -120,7 +124,13 @@ export function validateStoryboard(worktree, stops, index, storyboard) {
     const entry = snap(Math.round(storyboard.arrival.entryLine), storyboard.arrival.entryToken, source, here);
     if (entry) Object.assign(arrival, { entryLine: entry.line, entryToken: entry.token });
   }
-  return { beats, arrival, fileRole: storyboard.fileRole || '', inFunction: storyboard.inFunction || '' };
+  return {
+    beats,
+    arrival,
+    fileRole: storyboard.fileRole || '',
+    inFunction: storyboard.inFunction || '',
+    runsIn: (storyboard.runsIn || '').split(/\s+/).slice(0, 4).join(' '),
+  };
 }
 
 // --- Cached sub-stops ("Go deeper") ------------------------------------------------------
