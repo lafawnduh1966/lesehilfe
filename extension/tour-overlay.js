@@ -254,12 +254,14 @@
       svgEl.setAttribute('height', y1 - y0);
       svgInk.setAttribute('transform', `translate(0, ${-y0})`);
 
+      // Fade only the diff column (and the margin next to it), never GitHub's file tree on the left.
       const hole = { left: t.left - 6, top: first.top - 6, right: t.right + 6, bottom: last.bottom + 6 };
       const H = Math.max(document.documentElement.scrollHeight, hole.bottom);
+      const x0 = t.left - 12;
       for (const [left, top, width, height] of [
-        [0, 0, W, hole.top],
-        [0, hole.bottom, W, H - hole.bottom],
-        [0, hole.top, hole.left, hole.bottom - hole.top],
+        [x0, 0, W - x0, hole.top],
+        [x0, hole.bottom, W - x0, H - hole.bottom],
+        [x0, hole.top, hole.left - x0, hole.bottom - hole.top],
         [hole.right, hole.top, W - hole.right, hole.bottom - hole.top],
       ]) {
         const shade = document.createElement('div');
