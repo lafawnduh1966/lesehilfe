@@ -1,5 +1,6 @@
 import { helper } from './helper-client.js';
 import { renderMarkdown } from './markdown.js';
+import { createTour } from './tour-view.js';
 
 const $ = (selector) => document.querySelector(selector);
 const PR_PATH = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
@@ -332,8 +333,8 @@ function scheduleConversationRender() {
 
 async function prParams() {
   const { model } = await chrome.storage.local.get('model');
-  const base = prMeta[pr.key]?.data?.base;
-  return { owner: pr.owner, repo: pr.repo, number: pr.number, base, model: model || helper.status?.codex.defaultModel };
+  const { base, baseSha } = prMeta[pr.key]?.data || {};
+  return { owner: pr.owner, repo: pr.repo, number: pr.number, base, baseSha, model: model || helper.status?.codex.defaultModel };
 }
 
 async function ask() {
@@ -444,6 +445,7 @@ async function loadPRMeta(p) {
         deletions: d.deletions,
         changedFiles: d.changed_files,
         headSha: d.head?.sha,
+        baseSha: d.base?.sha,
         state: d.merged_at ? 'merged' : d.state,
       },
     };
@@ -478,6 +480,7 @@ const ACTORS = [
 ];
 
 async function loadOverview() {
+  if (tourView.active) tourView.exit();
   overview = null;
   renderOverview();
   if (!helper.status || !pr) return;
@@ -539,7 +542,18 @@ async function openStep(step) {
   });
 }
 
-function flowCard(flow) {
+const tourView = createTour({
+  el,
+  helper,
+  prParams,
+  getToken,
+  getState: () => ({ pr, tab, overview }),
+  render: () => renderOverview(),
+  onExit: () => renderOverview(),
+});
+document.addEventListener('keydown', (e) => tourView.onKey(e));
+
+function flowCard(flow, flowIndex) {
   const steps = el(
     'ol',
     { className: 'steps' },
@@ -565,6 +579,11 @@ function flowCard(flow) {
     { className: 'flow' },
     el('summary', {}, el('span', { textContent: flow.title }), el('span', { className: `tag ${flow.change}`, textContent: flow.change })),
     el('p', { className: 'flow-summary', textContent: flow.summary }),
+    (() => {
+      const take = el('button', { type: 'button', className: 'primary', textContent: 'Take the tour ›' });
+      take.addEventListener('click', () => tourView.start(flowIndex));
+      return take;
+    })(),
     flow.preconditions ? el('p', { className: 'muted small', textContent: `Preconditions: ${flow.preconditions}` }) : null,
     steps
   );
@@ -574,6 +593,7 @@ function renderOverview() {
   const root = $('#overview');
   if (!root || !pr) return;
   root.replaceChildren();
+  if (tourView.active && overview) return tourView.render(root);
   const ready = helper.status?.codex?.signedIn && prMeta[pr.key]?.data;
   const running = familiarizing?.key === pr.key && !familiarizing.error;
 
@@ -604,7 +624,7 @@ function renderOverview() {
   for (const [actor, label] of ACTORS) {
     const flows = overview.flows.filter((f) => f.actor === actor);
     if (!flows.length) continue;
-    root.append(el('h3', { className: 'actor', textContent: `${label} (${flows.length})` }), ...flows.map(flowCard));
+    root.append(el('h3', { className: 'actor', textContent: `${label} (${flows.length})` }), ...flows.map((f) => flowCard(f, overview.flows.indexOf(f))));
   }
   if (overview.openQuestions?.length) {
     root.append(
@@ -624,8 +644,11 @@ function renderOverview() {
 }
 
 async function refresh() {
+  const previousKey = pr?.key;
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   pr = tab?.url ? parsePR(tab.url) : null;
+  // Same PR (e.g. GitHub updated the URL while scrolling): keep the tour and overview.
+  if (pr && pr.key === previousKey && tourView.active) return;
   selection = [];
   snippets = [];
   render();

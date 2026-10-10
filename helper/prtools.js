@@ -92,6 +92,20 @@ export const OverviewSchema = Type.Object({
   openQuestions: Type.Optional(Type.Array(Type.String(), { description: 'Things a reviewer should clarify with the author' })),
 });
 
+/** Tool the agent calls once with the sub-stops of a tour stop; `onReport` receives them. */
+export function reportStopsTool(onReport) {
+  return defineTool({
+    name: 'report_stops',
+    label: 'Report tour stops',
+    description: 'Submit the sub-stops for the tour stop you were asked to go deeper into. Call exactly once, at the end.',
+    parameters: Type.Object({ stops: Type.Array(Step, { minItems: 2, maxItems: 8 }) }),
+    async execute(_id, { stops }) {
+      onReport(stops);
+      return text(`Saved ${stops.length} stops.`);
+    },
+  });
+}
+
 /** Tool the agent calls once with its finished overview; `onReport` receives the data. */
 export function reportFlowsTool(onReport) {
   return defineTool({

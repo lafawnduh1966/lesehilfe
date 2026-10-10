@@ -95,9 +95,10 @@ export function prGit(worktree, args) {
  * also fetches it so the PR's diff can be computed locally.
  * Returns { path, sha, baseSha } (baseSha = merge base, or null without `base`).
  */
-export function preparePR({ owner, repo, number, token, base }, progress = () => {}) {
+export function preparePR({ owner, repo, number, token, base, baseSha: prBaseSha }, progress = () => {}) {
   const worktree = worktreePath(owner, repo, number);
   if (base != null && !BRANCH.test(base)) throw new Error('Invalid base branch');
+  if (prBaseSha != null && !/^[0-9a-f]{40}$/.test(prBaseSha)) throw new Error('Invalid base commit');
 
   return locked(`${owner}/${repo}`, async () => {
     const bare = path.join(REPOS_DIR, owner, `${repo}.git`);
@@ -124,7 +125,10 @@ export function preparePR({ owner, repo, number, token, base }, progress = () =>
       return s.env;
     });
     const sha = await git(['rev-parse', ref], { cwd: bare });
-    const baseSha = base ? await git(['merge-base', baseRef, sha], { cwd: bare }) : prState.get(worktree)?.baseSha ?? null;
+    // Diff against the merge base with the base commit GitHub recorded for the PR. That
+    // stays correct after the PR is merged, when the base branch already contains it.
+    const recorded = prBaseSha && (await git(['cat-file', '-e', `${prBaseSha}^{commit}`], { cwd: bare }).then(() => prBaseSha, () => null));
+    const baseSha = base ? await git(['merge-base', recorded || baseRef, sha], { cwd: bare }) : prState.get(worktree)?.baseSha ?? null;
 
     progress('Checking out PR code…');
     // Checkout may lazily fetch file contents from origin, so reuse the working credentials.
@@ -141,6 +145,13 @@ export function preparePR({ owner, repo, number, token, base }, progress = () =>
     return { path: worktree, sha, baseSha };
   });
 }
+/** Like preparePR, but reuses the state from an earlier call in this helper process. */
+export function ensurePR(params, progress) {
+  const state = prState.get(worktreePath(params.owner, params.repo, params.number));
+  if (state?.baseSha || (state && !params.base)) return Promise.resolve({ path: worktreePath(params.owner, params.repo, params.number), ...state });
+  return preparePR(params, progress);
+}
+
 /** Removes PR worktrees that haven't been used for a while. */
 export async function cleanupWorktrees() {
   const cutoff = Date.now() - WORKTREE_MAX_AGE_DAYS * 86400_000;

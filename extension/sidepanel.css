@@ -236,3 +236,20 @@ h3.actor { font-size: 12px; margin: 12px 0 4px; color: var(--muted); }
 .overview-meta { margin-top: 8px; }
 #overview .tool { font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #overview .tool::before { content: "↳ "; }
+
+/* Tour */
+.tour-head { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+.crumbs { font-size: 12px; font-weight: 600; min-width: 0; }
+.crumbs .link { font-weight: 600; text-align: left; }
+.stop-title { font-size: 15px; margin: 2px 0 6px; }
+.stop-location { margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
+.stop-location code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tour-actions { margin: 8px 0; }
+.tour-nav { margin-top: 10px; position: sticky; bottom: 0; background: var(--bg); padding: 8px 0; border-top: 1px solid var(--border); }
+.tour-nav button { flex: 1; }
+.code.excerpt .context { opacity: 0.55; }
+.code.excerpt .in-range { box-shadow: inset 3px 0 0 var(--accent); }
+.code .hunk { color: var(--accent); }
+.deepening .tool { font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.deepening .tool::before { content: "↳ "; }
+.flow > .primary { width: auto; margin: 2px 0 6px; padding: 4px 12px; }

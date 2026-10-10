@@ -11,7 +11,10 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { OVERVIEWS_DIR, PI_DIR, WORKTREES_DIR } from './paths.js';
 import { log } from './native.js';
-import { diffTools, reportFlowsTool } from './prtools.js';
+import { diffTools, reportFlowsTool, reportStopsTool } from './prtools.js';
+import { outsideCheckout } from './sandbox.js';
+
+export { outsideCheckout };
 
 export { PI_VERSION };
 
@@ -90,30 +93,6 @@ export async function codexLogout() {
 // --- Sandbox ------------------------------------------------------------------------
 // pi's file tools accept any path. A PR is untrusted, so confine every tool call to
 // the PR checkout (after resolving symlinks a PR could add, e.g. to ~/.ssh).
-
-function realpathOrParent(target) {
-  let current = target;
-  const rest = [];
-  while (!fs.existsSync(current)) {
-    rest.unshift(path.basename(current));
-    const parent = path.dirname(current);
-    if (parent === current) return target;
-    current = parent;
-  }
-  return path.join(fs.realpathSync(current), ...rest);
-}
-
-export function outsideCheckout(root, input = {}) {
-  const realRoot = fs.realpathSync(root);
-  const target = realpathOrParent(path.resolve(root, input.path || '.'));
-  if (target !== realRoot && !target.startsWith(realRoot + path.sep)) return `path ${input.path}`;
-  for (const glob of [input.glob, input.pattern]) {
-    if (typeof glob === 'string' && (path.isAbsolute(glob) || glob.startsWith('~') || glob.split(/[\\/]/).includes('..'))) {
-      return `pattern ${glob}`;
-    }
-  }
-  return null;
-}
 
 const confineToCheckout = (root) => (pi) => {
   pi.on('tool_call', (event) => {
@@ -298,4 +277,45 @@ export async function familiarize(cwd, modelId, { sha, baseSha, pr }, emit) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(result, null, 2));
   return result;
+}
+
+// --- Tours: going deeper into a stop ------------------------------------------------------
+
+const DEEPEN = `You are guiding a reviewer through a user flow of this pull request, one stop at a time.
+They are at the stop below and want to go deeper. Break it into 2–6 sub-stops that follow the code further in, in execution order: into the functions it calls, the checks it makes, the state it changes, and where control goes next.
+
+- Each sub-stop points at a narrower line range than its parent, or into a function the parent calls (path and line range in the PR head).
+- Explanations go one level deeper than the parent's: which functions run, what data passes through, which checks guard it and why. Keep each to 2–4 sentences.
+- Prefer code this PR adds or changes; use pr_diff, grep and read to verify line ranges.
+
+When done, call report_stops exactly once, then reply with one short sentence.`;
+
+const stopSinks = new Map(); // worktree → receiver for the current report_stops call
+
+function describeStop(stop, depth) {
+  return `${'  '.repeat(depth)}- ${stop.title} — ${stop.file}:${stop.startLine}-${stop.endLine}\n${'  '.repeat(depth)}  ${stop.explanation}`;
+}
+
+/** Generates sub-stops for the last stop in `trail` (root step first). */
+export async function deepen(cwd, modelId, { flow, trail }, emit) {
+  let stops = null;
+  stopSinks.set(cwd, (data) => (stops = data));
+  const session = await getSession(cwd, modelId, {
+    kind: 'tour',
+    customTools: [reportStopsTool((data) => stopSinks.get(cwd)?.(data))],
+  });
+  const message = [
+    `## Flow: ${flow.title} (${flow.actor})`,
+    flow.summary,
+    `## Where the reviewer is (outermost first)`,
+    trail.map((stop, i) => describeStop(stop, i)).join('\n'),
+    `## Task\n\n${DEEPEN}`,
+  ].join('\n\n');
+  try {
+    await run(session, message, emit);
+  } finally {
+    stopSinks.delete(cwd);
+  }
+  if (!stops) throw new Error('The agent finished without sub-stops. Try again.');
+  return stops;
 }

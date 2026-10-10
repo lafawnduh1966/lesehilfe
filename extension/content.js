@@ -169,6 +169,41 @@
     return true;
   }
 
+  // --- Tour highlight -----------------------------------------------------------------
+  // Marks the rows of the current tour stop. GitHub re-renders the diff at will, so
+  // the marks are re-applied after DOM changes.
+
+  let tourStop = null; // { file, start, end }
+
+  function tourRows({ file, start, end }) {
+    const match = allFiles().find(({ view, el }) => view.filePath(el) === file);
+    if (!match) return [];
+    const { view, el } = match;
+    return [...el.querySelectorAll(view.rows)].filter((row) => {
+      const line = view.line(row, 'right') || view.line(row, 'left');
+      return line?.new != null && line.new >= start && line.new <= end;
+    });
+  }
+
+  function applyTourHighlight({ scroll }) {
+    document.querySelectorAll('.lesehilfe-tour').forEach((row) => row.classList.remove('lesehilfe-tour', 'lesehilfe-tour-first'));
+    if (!tourStop) return false;
+    const rows = tourRows(tourStop);
+    rows.forEach((row) => row.classList.add('lesehilfe-tour'));
+    rows[0]?.classList.add('lesehilfe-tour-first');
+    if (scroll && rows[0]) rows[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    return rows.length > 0;
+  }
+
+  let reapply;
+  new MutationObserver(() => {
+    if (!tourStop) return;
+    clearTimeout(reapply);
+    reapply = setTimeout(() => {
+      if (!document.querySelector('.lesehilfe-tour')) applyTourHighlight({ scroll: false });
+    }, 300);
+  }).observe(document.documentElement, { childList: true, subtree: true });
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'getSelection') {
       sendResponse({ pr: currentPR(), snippets: lastSnippets });
@@ -177,6 +212,9 @@
       return true;
     } else if (message.type === 'reveal') {
       sendResponse({ ok: reveal(message) });
+    } else if (message.type === 'highlight') {
+      tourStop = message.stop ? { file: message.stop.file, start: message.stop.startLine, end: message.stop.endLine } : null;
+      sendResponse({ ok: applyTourHighlight({ scroll: true }) });
     }
   });
 })();
