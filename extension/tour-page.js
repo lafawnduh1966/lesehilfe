@@ -191,8 +191,11 @@
     return (
       `<div class="eyebrow">${i === 0 ? esc(tour.flowTitle) : `Next · stop ${i + 1} of ${tour.stops.length}`}</div>` +
       `<div class="files">${files}</div>` +
-      `<div class="kind">${icon} ${esc(label)}${arrival.short ? `<span class="short"> · ${esc(arrival.short)}</span>` : ''}</div>` +
-      (explain && i > 0 ? `<div class="explain">${esc(explain)}</div>` : '') +
+      // How the flow gets here, concretely; the generic category only as a fallback.
+      (arrival.how
+        ? `<div class="how"><span class="how-label">${i === 0 ? 'How it starts' : 'How it continues'}</span>${esc(arrival.how)}</div>`
+        : `<div class="kind">${icon} ${esc(label)}${arrival.short ? `<span class="short"> · ${esc(arrival.short)}</span>` : ''}</div>` +
+          (explain && i > 0 ? `<div class="explain">${esc(explain)}</div>` : '')) +
       `<div class="title">${esc(stop.title)}</div>` +
       (sb?.fileRole ? `<div class="role">${esc(base(stop.file))} — ${esc(sb.fileRole)}</div>` : '') +
       (why ? `<div class="why">${esc(why)}</div>` : '<div class="why">Lesehilfe is still sketching this part…</div>') +

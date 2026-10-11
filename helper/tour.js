@@ -111,6 +111,7 @@ export function validateStoryboard(worktree, stops, index, storyboard) {
   // Arrival: where control left the previous stop and where it enters this one.
   const arrival = {
     kind: storyboard.arrival?.kind || (index === 0 ? 'start' : 'calls'),
+    how: storyboard.arrival?.how || '',
     why: storyboard.arrival?.why || '',
     short: (storyboard.arrival?.short || '').split(/\s+/).slice(0, 8).join(' '),
   };

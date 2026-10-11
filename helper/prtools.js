@@ -132,7 +132,8 @@ export function reportStoryboardTool(onReport) {
         kind: Type.Union(['start', 'calls', 'transaction', 'later', 'event', 'returns'].map((k) => Type.Literal(k)), {
           description: 'start = first stop; calls = direct function call; transaction = backend submits an on-chain transaction; later = a separate request, actor or moment; event = reacts to an emitted event; returns = back to the caller',
         }),
-        why: Type.String({ description: 'One sentence: why the flow comes here now (for stop 1: where the actor starts)' }),
+        how: Type.String({ description: 'One concrete sentence: what exactly triggers this stop and through which mechanism, naming the actor or system — e.g. "LayerZero delivers the hub\'s message to the spoke; the OFT receive path calls _credit", "The investor\'s browser posts the signed order to POST /orders", "Safe owners execute the funding proposal". For stop 1: how the actor starts the flow.' }),
+        why: Type.String({ description: 'One sentence: why the flow comes here now — its purpose (for stop 1: what the actor wants)' }),
         short: Type.String({ description: 'The same transition in at most 6 words, e.g. "client uploads the signed order", "submits settlement transaction", "calls redeem()"' }),
         fromLine: Type.Optional(Type.Number({ description: 'Line in the PREVIOUS stop\'s file where control leaves for this stop (the call, submission, emit…)' })),
         fromToken: Type.Optional(Type.String({ description: 'Exact text on fromLine, e.g. the called function name' })),

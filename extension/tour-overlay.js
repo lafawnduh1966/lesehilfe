@@ -162,6 +162,8 @@
     .transition .arrow { color: #59636e; }
     .transition .kind { font-weight: 600; color: #0969da; margin-bottom: 2px; }
     .transition .kind .short { font-weight: 400; color: #1f2328; }
+    .transition .how { font-size: 14px; line-height: 1.45; margin-bottom: 4px; }
+    .transition .how-label { display: block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #0969da; margin-bottom: 2px; }
     .transition .explain { font-size: 12px; color: #59636e; margin-bottom: 6px; }
     .transition .title { font-size: 17px; font-weight: 600; line-height: 1.3; margin: 6px 0 2px; }
     .transition .why { font: 18px/1.3 "Noteworthy", "Marker Felt", "Comic Sans MS", cursive; color: #3b3200; background: #fff8b8; padding: 8px 12px; border-radius: 3px; margin: 8px 0 12px; }

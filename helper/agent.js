@@ -344,7 +344,8 @@ For every stop below, write a storyboard of 2–5 beats, in the order a reader s
 - Stay within the stop's line range.
 
 For every stop also describe its **arrival**, so the reviewer understands each jump between files:
-- kind: how the flow gets here from the previous stop (stop 1: "start").
+- how: concretely what triggers this stop and through which mechanism — name the actor or system (a user in their browser, the backend's job, a relayer like LayerZero, Safe owners, a contract calling another). Don't stay generic ("a separate action"); say who or what does what.
+- kind: the category of that transition (stop 1: "start"); "later" only when a separate request or actor really starts it, not for automatic deliveries (those are "event" or "calls").
 - why: one sentence on why the flow comes here now, e.g. "The backend has checked everything; now it submits the signed settlement on-chain." For stop 1, where and how the actor starts the flow.
 - fromLine/fromToken: the exact place in the previous stop's code where control leaves for this stop (a call, a transaction submission, an emit). entryLine/entryToken: where it arrives here (function signature, handler). Omit what doesn't exist (e.g. a "later" step started by another actor has no call site).
 - short: the same transition in at most 6 words, for a map of the flow (e.g. "client uploads the signed order", "submits settlement transaction", "calls redeem()").

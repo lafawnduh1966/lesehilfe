@@ -96,7 +96,7 @@ const methods = {
     const result = {};
     overview.flows[flowIndex].steps.forEach((_, i) => {
       const hit = cached[`sb:${flowIndex}:${i}`];
-      if (hit && !Array.isArray(hit)) result[i] = hit;
+      if (hit && !Array.isArray(hit) && hit.arrival?.how != null) result[i] = hit;
     });
     return result;
   },
@@ -114,7 +114,7 @@ const methods = {
     flow.steps.forEach((_, i) => {
       // Storyboards from earlier versions (plain beat arrays, no runsIn) are rewritten.
       const hit = cached[key(i)];
-      if (hit && !Array.isArray(hit) && hit.runsIn && !params.regenerate) emit('storyboard', { index: i, storyboard: hit });
+      if (hit && !Array.isArray(hit) && hit.runsIn && hit.arrival?.how != null && !params.regenerate) emit('storyboard', { index: i, storyboard: hit });
       else missing.push(i);
     });
     if (!missing.length) return { missing: [] };
