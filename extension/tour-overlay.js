@@ -247,9 +247,13 @@
     function measure() {
       const table = tableFor(stop.file);
       if (!table) return null;
-      const first = rowCell(table, stop.startLine);
-      const last = rowCell(table, stop.endLine) || first;
-      if (!first) return null;
+      // The spotlight spans the stop's range and every beat: entry and exit points often sit
+      // a few lines outside the range (e.g. the function signature above it).
+      const lines = [stop.startLine, stop.endLine, ...stop.beats.flatMap((b) => [...b.lines, b.arrowTo].filter(Boolean))];
+      const present = lines.filter((n) => rowCell(table, n));
+      const first = rowCell(table, Math.min(...present));
+      const last = rowCell(table, Math.max(...present)) || first;
+      if (!present.length || !first) return null;
       const t = docRect(table.getBoundingClientRect());
       return { table, t, lane: t.right + 16, badges: {}, first: docRect(first.closest('tr').getBoundingClientRect()), last: docRect(last.closest('tr').getBoundingClientRect()), nextFree: 0 };
     }
