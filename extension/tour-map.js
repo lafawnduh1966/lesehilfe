@@ -8,8 +8,8 @@ const KINDS = {
   start: ['▶', 'starts'],
   calls: ['⤵', 'calls'],
   transaction: ['⛓', 'submits a transaction'],
-  later: ['⏭', 'later'],
-  event: ['📡', 'reacts to an event'],
+  later: ['⏭', 'new action'],
+  event: ['📡', 'triggered by an event'],
   returns: ['↩', 'returns'],
 };
 // Transitions that don't happen in the same moment are drawn dashed.

@@ -17,13 +17,14 @@
   const base = (file) => file.split('/').pop();
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // How the flow reaches a stop: icon, label, and for the less obvious kinds a short explanation.
   const KINDS = {
-    start: ['▶', 'Where it starts'],
-    calls: ['⤵', 'Calls into'],
-    transaction: ['⛓', 'On-chain transaction'],
-    later: ['⏭', 'Later, separately'],
-    event: ['📡', 'Reacts to an event'],
-    returns: ['↩', 'Returns to'],
+    start: ['▶', 'Where it starts', ''],
+    calls: ['⤵', 'Calls', ''],
+    transaction: ['⛓', 'On-chain transaction', 'The backend submits a transaction; the next stop runs on-chain.'],
+    later: ['⏭', 'New action', 'Not a direct call: the flow continues with a separate request or transaction, often started by someone else.'],
+    event: ['📡', 'Triggered by an event', 'Something reacts to an event emitted earlier, not to a direct call.'],
+    returns: ['↩', 'Returns', 'Control goes back to the caller.'],
   };
 
   // { prKey, owner, repo, number, sha, flowIndex, flowTitle, flowSummary, stops,
@@ -182,7 +183,7 @@
     const sb = storyboard(i);
     const arrival = sb?.arrival || {};
     const prev = tour.stops[i - 1];
-    const [icon, label] = KINDS[arrival.kind || (i === 0 ? 'start' : 'calls')] || KINDS.calls;
+    const [icon, label, explain] = KINDS[arrival.kind || (i === 0 ? 'start' : 'calls')] || KINDS.calls;
     const files = prev && prev.file !== stop.file
       ? `<span class="file">${esc(base(prev.file))}</span><span class="arrow">→</span><span class="file to">${esc(base(stop.file))}</span>`
       : `<span class="file to">${esc(base(stop.file))}</span>${prev ? '<span class="arrow">(same file)</span>' : ''}`;
@@ -190,7 +191,9 @@
     return (
       `<div class="eyebrow">${i === 0 ? esc(tour.flowTitle) : `Next · stop ${i + 1} of ${tour.stops.length}`}</div>` +
       `<div class="files">${files}</div>` +
-      `<div class="kind">${icon} ${esc(label)}: ${esc(stop.title)}</div>` +
+      `<div class="kind">${icon} ${esc(label)}${arrival.short ? `<span class="short"> · ${esc(arrival.short)}</span>` : ''}</div>` +
+      (explain && i > 0 ? `<div class="explain">${esc(explain)}</div>` : '') +
+      `<div class="title">${esc(stop.title)}</div>` +
       (sb?.fileRole ? `<div class="role">${esc(base(stop.file))} — ${esc(sb.fileRole)}</div>` : '') +
       (why ? `<div class="why">${esc(why)}</div>` : '<div class="why">Lesehilfe is still sketching this part…</div>') +
       `<div class="hint"><kbd>→</kbd> continue · <kbd>←</kbd> back · <kbd>Esc</kbd> end</div>`
